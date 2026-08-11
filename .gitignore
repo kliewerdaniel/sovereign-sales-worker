@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime worker state (per-workspace audit/sqlite/artifacts)
+.state/
+
+# OS
+.DS_Store
