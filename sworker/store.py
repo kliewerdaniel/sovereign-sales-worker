@@ -104,6 +104,8 @@ class WorkerStore:
 
     # -- crud --------------------------------------------------------------
     def put(self, table: str, obj: Record | Dict[str, Any], event: str = "put") -> Dict[str, Any]:
+        if table not in TABLES:
+            raise ValueError(f"unknown table {table!r}; valid: {sorted(TABLES)}")
         d = obj.to_dict() if isinstance(obj, Record) else dict(obj)
         cols = TABLES[table]
         aliases = COLUMN_ALIASES.get(table, {})
@@ -125,6 +127,8 @@ class WorkerStore:
         return d
 
     def get(self, table: str, record_id: str) -> Optional[Dict[str, Any]]:
+        if table not in TABLES:
+            raise ValueError(f"unknown table {table!r}; valid: {sorted(TABLES)}")
         row = self._conn.execute(
             f"SELECT json FROM {table} WHERE id = ?", (record_id,)
         ).fetchone()
@@ -133,6 +137,8 @@ class WorkerStore:
     def find(
         self, table: str, order: str = "created", desc: bool = False, limit: int = 0, **where: Any
     ) -> List[Dict[str, Any]]:
+        if table not in TABLES:
+            raise ValueError(f"unknown table {table!r}; valid: {sorted(TABLES)}")
         cols = TABLES[table]
         clauses, params = [], []
         for k, v in where.items():
@@ -144,7 +150,11 @@ class WorkerStore:
         sql = f"SELECT json FROM {table}"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        if order in cols:
+        if order != "created":
+            if order not in cols:
+                raise ValueError(
+                    f"{table} has no indexed column {order!r} to order by; valid: {sorted(cols)}"
+                )
             # every indexed column is TEXT; numeric ones must sort numerically
             key = f"CAST({order} AS REAL)" if order in ("created", "started", "seq", "idx", "next_run") else order
             sql += f" ORDER BY {key} {'DESC' if desc else 'ASC'}"

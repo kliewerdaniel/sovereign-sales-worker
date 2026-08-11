@@ -12,6 +12,16 @@ you:
 Everything reads from and writes to the same local store the CLI uses — there is
 no separate database, nothing leaves the machine. The server binds to
 ``127.0.0.1`` only.
+
+Security model (see docs/SECURITY.md for the full picture): binding to
+``127.0.0.1`` is NOT a CSRF defense — any page in the same browser can POST to
+``/approve`` or ``/resume`` with no token. So every state-changing request
+(``/run``, ``/approve``, ``/deny``, ``/resume``, ``/verify``) requires a
+per-session token printed to stdout at startup, supplied as a ``?token=`` query
+param or an ``X-SW-Token`` header; and the ``Origin``/``Referer`` header must be
+same-origin (empty or ``http://127.0.0.1:<port>``). Requests that fail either
+check get a 403. Read-only GETs (``/``, ``/run?...``, ``/verify?...``,
+``/api/runs``) need no token.
 """
 
 from __future__ import annotations
@@ -20,6 +30,7 @@ import argparse
 import html
 import json
 import os
+import secrets
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -118,7 +129,8 @@ def render_index(store: WorkerStore, ws) -> str:
     opts = "".join(f"<option>{_esc(w.name)}</option>" for w in workers)
     form = (
         "<form action='/run' method=post>"
-        "<select name=worker>" + opts + "</select>"
+        + _token_hidden()
+        + "<select name=worker>" + opts + "</select>"
         "<input name=request placeholder='request...' size=50 required>"
         "<button>Run</button></form>"
     )
@@ -139,9 +151,9 @@ def _render_approvals(store, run_id: str) -> str:
     rows = "".join(
         f"<tr><td><code>{_esc(a['id'])}</code></td><td>{_esc(a['summary'])}</td>"
         f"<td><span class='pill'>{_esc(a['risk'])}</span></td>"
-        f"<td><form action='/approve' method=post style='margin:0'>{_hidden('appr_id', a['id'])}"
+        f"<td><form action='/approve' method=post style='margin:0'>{_hidden('appr_id', a['id'])}{_token_hidden()}"
         f"<button type=submit>Approve</button></form></td>"
-        f"<td><form action='/deny' method=post style='margin:0'>{_hidden('appr_id', a['id'])}"
+        f"<td><form action='/deny' method=post style='margin:0'>{_hidden('appr_id', a['id'])}{_token_hidden()}"
         f"<button type=submit class=danger>Reject</button></form></td></tr>"
         for a in pending
     )
@@ -153,6 +165,15 @@ def _render_approvals(store, run_id: str) -> str:
 
 def _hidden(name: str, val: str) -> str:
     return f"<input type=hidden name={name} value={_esc(val)}>"
+
+
+# Per-process session token, set by serve(); used to embed the token in forms
+# so browser users get it automatically without editing URLs.
+_SESSION_TOKEN = ""
+
+
+def _token_hidden() -> str:
+    return _hidden("token", _SESSION_TOKEN) if _SESSION_TOKEN else ""
 
 
 def render_run(store: WorkerStore, ws, run_id: str) -> str:
@@ -179,12 +200,12 @@ def render_run(store: WorkerStore, ws, run_id: str) -> str:
     )
     audit_txt = "\n".join(f"{_time(e['ts'])}  {e['event']:<22} {e['table']:<13} {e['id']}" for e in audit)
     verify_btn = (
-        f"<form action='/verify' method=post style='display:inline'>{_hidden('run_id', run_id)}"
+        f"<form action='/verify' method=post style='display:inline'>{_hidden('run_id', run_id)}{_token_hidden()}"
         f"<button type=submit>Run verification</button></form>"
     )
     if run["status"] in ("AWAITING_APPROVAL",):
         resume_btn = (
-            f"<form action='/resume' method=post style='display:inline'>{_hidden('run_id', run_id)}"
+            f"<form action='/resume' method=post style='display:inline'>{_hidden('run_id', run_id)}{_token_hidden()}"
             f"<button type=submit>Resume run</button></form>"
         )
     else:
@@ -245,9 +266,11 @@ def render_verify(store: WorkerStore, ws, run_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
-    def __init__(self, *a, store=None, ws=None, **k):
+    def __init__(self, *a, store=None, ws=None, token: str = "", port: int = 8777, **k):
         self._store = store
         self._ws = ws
+        self._token = token
+        self._port = port
         super().__init__(*a, **k)
 
     def log_message(self, fmt, *args):  # type: ignore[override]
@@ -271,6 +294,43 @@ class Handler(BaseHTTPRequestHandler):
         data = parse_qs(raw.decode("utf-8", "replace"))
         return {k: (v[0] if v else "") for k, v in data.items()}
 
+    # -- auth + CSRF -------------------------------------------------------
+    def _origin_ok(self) -> bool:
+        """Same-origin check. Empty Origin/Referer (browser-less, curl) is allowed;
+        a cross-origin value is rejected. Loopback-only by design."""
+        origin = self.headers.get("Origin")
+        referer = self.headers.get("Referer")
+        allowed = {"", f"http://127.0.0.1:{self._port}/", f"http://127.0.0.1:{self._port}"}
+        for hdr in (origin, referer):
+            if hdr and hdr not in allowed:
+                return False
+        return True
+
+    def _token_ok(self, form: dict) -> bool:
+        if not self._token:
+            return True  # tokenless server (tests/legacy) -> rely on loopback + Origin
+        provided = self.headers.get("X-SW-Token")
+        if not provided:
+            provided = (form or {}).get("token") or self._qs().get("token", [""])[0]
+        return provided == self._token
+
+    def _require_state_change(self, form: dict) -> bool:
+        """Return True if the request may proceed. Otherwise write a 403 and
+        return False. Enforces token + same-origin for mutating requests."""
+        if not self._origin_ok():
+            self._send(
+                page("Forbidden", "<p>Cross-origin request rejected (CSRF defense).</p>").encode(),
+                code=403,
+            )
+            return False
+        if not self._token_ok(form):
+            self._send(
+                page("Forbidden", "<p>Missing or invalid session token.</p>").encode(),
+                code=403,
+            )
+            return False
+        return True
+
     def do_GET(self):
         url = urlparse(self.path)
         qs = self._qs()
@@ -292,6 +352,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         url = urlparse(self.path)
         form = self._form()
+        if not self._require_state_change(form):
+            return
         try:
             if url.path == "/run":
                 worker = form.get("worker", "")
@@ -344,16 +406,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve(port: int = 8777, home: str = ""):
+def serve(port: int = 8777, home: str = "", token: str = ""):
     if home:
         os.environ["SWORKER_HOME"] = os.path.abspath(home)
     ws = default_workspace()
     ws.ensure()
     store = WorkerStore(ws.state_dir)
+    if not token:
+        token = secrets.token_urlsafe(32)
+    global _SESSION_TOKEN
+    _SESSION_TOKEN = token
     httpd = ThreadingHTTPServer(
-        ("127.0.0.1", port), lambda *a, **k: Handler(*a, store=store, ws=ws, **k)
+        ("127.0.0.1", port),
+        lambda *a, **k: Handler(*a, store=store, ws=ws, token=token, port=port, **k),
     )
     print(f"Sovereign AI Worker UI on http://127.0.0.1:{port}  (Ctrl-C to stop)")
+    print(f"session token: {token}")
+    print("(pass it as ?token=... on state-changing requests, or X-SW-Token header)")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -364,8 +433,13 @@ def cli(argv=None):
     ap = argparse.ArgumentParser(prog="sworker.web")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--home", default="")
+    ap.add_argument(
+        "--token",
+        default="",
+        help="explicit session token (otherwise a random one is generated and printed)",
+    )
     args = ap.parse_args(argv)
-    serve(port=args.port, home=args.home)
+    serve(port=args.port, home=args.home, token=args.token)
 
 
 if __name__ == "__main__":

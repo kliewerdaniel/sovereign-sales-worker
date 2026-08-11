@@ -1,11 +1,10 @@
 """Shell + Python execution.
 
-Honest security note (see docs/SECURITY.md): these run as SUBPROCESSES on the
-host, not in a VM. The boundaries enforced are real but shallow — argv[0]
-allowlist, cwd pinned to the workspace, env allowlist, wall-clock timeout,
-output cap, no shell metacharacter interpretation (``shell=False``). A
-determined process can still reach the network and read anything the invoking
-user can read. Set ``sandbox: docker`` on the worker for real isolation.
+Honest security note: these run as SUBPROCESSES on the host, not in a VM. The
+boundaries enforced are real but shallow — see docs/SECURITY.md (section 2) for
+the full model and its limits, including why you should set ``sandbox: docker``
+on a worker for genuine isolation rather than relying on these controls as a
+security boundary.
 """
 
 from __future__ import annotations

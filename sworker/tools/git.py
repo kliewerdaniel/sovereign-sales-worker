@@ -1,4 +1,6 @@
-"""Git tools. Read operations are free; commits are reversible; push is external."""
+"""Git tools. Read operations are free; commits are reversible; push is external
+(leaves the machine). See docs/SECURITY.md (section 4) for the egress caveats.
+"""
 
 from __future__ import annotations
 

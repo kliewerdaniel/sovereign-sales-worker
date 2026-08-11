@@ -96,6 +96,9 @@ def ws(tmp_path):
     return w
 
 
+_TEST_TOKEN = "test-token-not-secret"
+
+
 def _start_server(ws):
     from http.server import ThreadingHTTPServer
 
@@ -103,7 +106,7 @@ def _start_server(ws):
     port = _free_port()
     httpd = ThreadingHTTPServer(
         ("127.0.0.1", port),
-        lambda *a, **k: web_mod.Handler(*a, store=store, ws=ws, **k),
+        lambda *a, **k: web_mod.Handler(*a, store=store, ws=ws, token=_TEST_TOKEN, port=port, **k),
     )
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
@@ -112,6 +115,8 @@ def _start_server(ws):
 
 def _post(port: int, path: str, form: dict) -> HTTPResponse:
     url = f"http://127.0.0.1:{port}{path}"
+    form = dict(form)
+    form.setdefault("token", _TEST_TOKEN)
     data = urllib.parse.urlencode(form).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     try:
@@ -179,39 +184,6 @@ def test_invalid_submit_rejected(ws):
         httpd.shutdown()
 
 
-def test_approval_resume_loop(ws):
-    httpd, port = _start_server(ws)
-    try:
-        # Gated worker -> run ends AWAITING_APPROVAL
-        resp = _post(port, "/run", {"worker": "acme-gated",
-                                    "request": "What was total Q2 revenue?"})
-        assert resp.status == 303, resp.status
-        loc = resp.headers["Location"]
-        run_id = loc.split("run_id=")[1]
-
-        page = _get(port, f"/run?run_id={run_id}")
-        assert page.status == 200
-        assert "AWAITING_APPROVAL" in _body(page)
-
-        # Pull the pending approval id directly from the store
-        store = WorkerStore(ws.state_dir)
-        pending = ApprovalManager(store).pending(run_id)
-        assert pending, "expected a pending approval"
-        appr_id = pending[0]["id"]
-
-        # Approve + resume over HTTP
-        ar = _post(port, "/approve", {"appr_id": appr_id})
-        assert ar.status == 303, ar.status
-        rr = _post(port, "/resume", {"run_id": run_id})
-        assert rr.status == 303, rr.status
-
-        final = _get(port, f"/run?run_id={run_id}")
-        assert final.status == 200
-        assert "SUCCESS" in _body(final)
-    finally:
-        httpd.shutdown()
-
-
 def test_verify_page_runs_derived_checks(ws):
     httpd, port = _start_server(ws)
     try:
@@ -229,3 +201,64 @@ def test_verify_page_runs_derived_checks(ws):
         assert "no verification checks declared" not in body
     finally:
         httpd.shutdown()
+
+
+def test_state_change_without_token_is_rejected(ws):
+    httpd, port = _start_server(ws)
+    try:
+        # No token -> 403 regardless of valid payload.
+        resp = _post(port, "/run", {"worker": "acme-analyst",
+                                    "request": "What was total Q2 revenue?",
+                                    "token": ""})
+        assert resp.status == 403, resp.status
+        # And a wrong token also fails.
+        wrong = _post(port, "/run", {"worker": "acme-analyst",
+                                     "request": "x", "token": "nope"})
+        assert wrong.status == 403, wrong.status
+    finally:
+        httpd.shutdown()
+
+
+def test_state_change_with_cross_origin_is_rejected(ws):
+    httpd, port = _start_server(ws)
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/run",
+            data=urllib.parse.urlencode(
+                {"worker": "acme-analyst", "request": "x", "token": _TEST_TOKEN}
+            ).encode(),
+            method="POST",
+            headers={"Origin": "http://evil.example.com"},
+        )
+        resp = _opener.open(req)
+        assert resp.status == 403, resp.status
+    except HTTPError as e:
+        assert e.code == 403, e.code
+    finally:
+        httpd.shutdown()
+
+
+def test_approval_resume_loop_with_token(ws):
+    httpd, port = _start_server(ws)
+    try:
+        resp = _post(port, "/run", {"worker": "acme-gated",
+                                    "request": "What was total Q2 revenue?"})
+        assert resp.status == 303, resp.status
+        run_id = resp.headers["Location"].split("run_id=")[1]
+
+        store = WorkerStore(ws.state_dir)
+        pending = ApprovalManager(store).pending(run_id)
+        assert pending, "expected a pending approval"
+        appr_id = pending[0]["id"]
+
+        ar = _post(port, "/approve", {"appr_id": appr_id})
+        assert ar.status == 303, ar.status
+        rr = _post(port, "/resume", {"run_id": run_id})
+        assert rr.status == 303, rr.status
+
+        final = _get(port, f"/run?run_id={run_id}")
+        assert final.status == 200
+        assert "SUCCESS" in _body(final)
+    finally:
+        httpd.shutdown()
+

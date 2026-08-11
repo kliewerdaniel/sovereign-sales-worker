@@ -20,11 +20,27 @@ company-knowledge retrieval (it degrades to labelled grep without it).
 
 ## Why it's built this way
 
-- **The model proposes; the engine disposes.** Every tool call passes through
-  `PermissionEngine.evaluate` *before* it runs. The model cannot see or alter
-  that decision, and a tool can never widen its own filesystem boundary
-  (`ToolContext.resolve` realpaths both sides and rejects escapes — including
-  symlink escapes like `/tmp` → `/private/tmp` on macOS).
+- **Decomposition does not launder risk.** `DecompositionGuard` remembers a risk
+  ceiling a human has already rejected or left pending in a run, and blocks any
+  equal-or-higher-risk action from sneaking in afterwards — so an agent refused
+  "send the email" can't get there via "write the email to a file" then
+  "shell: sendmail". This guarantee only holds because risk classification
+  itself is **static and fails closed**, not keyword matching:
+  - `python.run` is classified by parsing the submitted code with `ast` and
+    walking the real import/call graph. `subprocess`, `os.system`, `os.popen`,
+    `socket`, `urllib`, `requests`, `httpx`, `ftplib`, `smtplib`, `ctypes`, … are
+    EXTERNAL; `shutil.rmtree`, `os.remove`, `os.unlink`, `Path.unlink`, … are
+    DESTRUCTIVE. Any `ast.parse` failure, any dynamic `eval`/`exec`/`compile`/
+    `__import__`/`getattr` with a non-literal argument, or any import/call the
+    walker doesn't positively recognise is escalated to the **highest tier the
+    tool can reach** — it never silently defaults to the safe floor.
+  - `shell.exec` resolves `argv[0]` (already allowlist-checked) and additionally
+    floors interpreter binaries — `python3 -c "…"`, `bash -c "…"`, `perl`, `node`,
+    `ruby`, `osascript`, … — at EXTERNAL regardless of the rest of the argv, since
+    their behaviour can't be verified from a command line the way a fixed-purpose
+    binary like `ls` or `cat` can.
+  - See `docs/SECURITY.md` for the honest security model, its limits, and the
+    fail-closed contract.
 - **Nothing is fabricated.** No language model? The engine falls back to a
   deterministic plan that does real retrieval over real files and says plainly,
   in the artifact, that it ran without a model. A tool fails → the step is
@@ -150,6 +166,24 @@ SWORKER_HOME=/tmp/acme \
 # open http://127.0.0.1:8777
 ```
 
+On startup the server prints a **per-session token** to stdout:
+
+```
+Sovereign AI Worker UI on http://127.0.0.1:8777  (Ctrl-C to stop)
+session token: A1d2IzydUVOo5C5nxi8lWWBP1lwQCIKHd_sLStVHhDs
+(pass it as ?token=... on state-changing requests, or X-SW-Token header)
+```
+
+Binding to `127.0.0.1` is **not** a CSRF defense — any page in the same browser
+could otherwise POST to `/approve` or `/resume` with no token. So every
+state-changing request (`/run`, `/approve`, `/deny`, `/resume`, `/verify`)
+requires that token (as `?token=` or the `X-SW-Token` header) **and** a
+same-origin `Origin`/`Referer`. Requests failing either check get `403`. The
+token is embedded in the page's forms automatically, so clicking buttons in the
+UI needs nothing extra; only direct/scripted POSTs must supply it. Pass
+`--token <fixed>` to use a stable token (e.g. behind a reverse proxy that already
+enforces auth).
+
 A single-file `http.server` app (stdlib only) that lets you:
 
 - submit a request to a worker and watch the run appear;
@@ -239,3 +273,11 @@ sworker/
 engine disposes; nothing fabricated; verification re-derives from source with no
 model in the loop; the store is sqlite fast-index + JSONL truth so any run is
 byte-for-byte reconstructable.
+
+## Security
+
+The honest security model — permission/risk classification (and its fail-closed
+behaviour), the execution sandbox limits, HTTP SSRF surface, git egress, and the
+web UI's token + same-origin CSRF defense — is documented in
+[`docs/SECURITY.md`](docs/SECURITY.md). Read it before deploying a worker that
+can reach the network or push to a remote.

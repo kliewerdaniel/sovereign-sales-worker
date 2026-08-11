@@ -1,5 +1,7 @@
-"""HTTP tool. Network egress is a boundary crossing, so it is EXTERNAL risk
-for anything that is not a plain GET to an allowlisted host."""
+"""HTTP tool. Network egress is a boundary crossing, so it is EXTERNAL risk for
+anything that is not a plain GET to an allowlisted host. See docs/SECURITY.md
+(section 3) for the SSRF caveats and the `auth_env` / scheme rules.
+"""
 
 from __future__ import annotations
 
