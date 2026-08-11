@@ -160,6 +160,22 @@ class _PythonRiskVisitor(ast.NodeVisitor):
         return ""  # subscript / call / anything computed -> unknown
 
     def visit_Call(self, node: ast.Call) -> None:
+        # Escalate based on the call target itself (func resolution / dynamic
+        # builtins / external-or-destructive module paths). This helper may
+        # return early on a recognized outcome, but that only decides *this*
+        # call's conclusion — it must not stop us from descending into nested
+        # calls in the arguments, so the outer call is handled separately below.
+        self._check_call_func(node)
+        # Always recurse into arguments: a dangerous call can be nested as an
+        # argument of an innocuous outer call (e.g. ``print(os.system(...))``)
+        # and must still be visited, not skipped because the outer call returned
+        # early after classifying itself as safe.
+        for arg in node.args:
+            self.visit(arg)
+        for kw in node.keywords:
+            self.visit(kw.value)
+
+    def _check_call_func(self, node: ast.Call) -> None:
         # Dynamic builtins whose argument is not a literal defeat analysis.
         fn = node.func
         if isinstance(fn, ast.Name) and fn.id in _DYNAMIC_BUILTINS:

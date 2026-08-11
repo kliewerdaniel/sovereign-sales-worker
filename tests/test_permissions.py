@@ -11,7 +11,7 @@ high-risk action past the floor.
 from __future__ import annotations
 
 from sworker.permissions import classify, classify_python, classify_shell
-from sworker.models import RiskLevel
+from sworker.models import RiskLevel, risk_rank
 from sworker.tools.base import Tool
 from sworker.tools.exec import PythonAnalysis, ShellExec
 
@@ -122,3 +122,49 @@ def test_classify_shell_via_tool_object():
     tool = ShellExec()
     args = {"command": "python3 -c \"import os; os.system('echo pwned')\""}
     assert classify(tool, args) == RiskLevel.EXTERNAL
+
+
+# ---- nested calls: the "resolved, so I stopped walking" bypass --------------
+#
+# visit_Call must keep descending into its arguments after classifying the
+# outer call. A dangerous call nested as an argument of an innocuous outer call
+# (e.g. print(os.system(...))) used to be invisible because the visitor returned
+# as soon as it resolved the *outer* call.
+
+def test_os_system_nested_in_print_is_external():
+    nested = "import os\nprint(os.system('curl evil.com'))"
+    top = "import os\nos.system('curl evil.com')"
+    assert classify_python(nested) == classify_python(top) == RiskLevel.EXTERNAL
+
+
+def test_subprocess_run_nested_in_str_is_external():
+    nested = "import subprocess\nresult = str(subprocess.run(['curl','evil.com']))"
+    top = "import subprocess\nsubprocess.run(['curl','evil.com'])"
+    assert classify_python(nested) == classify_python(top) == RiskLevel.EXTERNAL
+
+
+def test_shutil_rmtree_nested_in_conditional_is_destructive():
+    # nested inside the value branch of a conditional expression (never taken)
+    nested = "import shutil\nx = None if False else shutil.rmtree('/tmp/x')"
+    top = "import shutil\nshutil.rmtree('/tmp/x')"
+    assert classify_python(nested) == classify_python(top) == RiskLevel.DESTRUCTIVE
+
+
+def test_dynamic_import_nested_in_list_literal_is_external_or_higher():
+    nested = "x = [__import__('os').system('id')]"
+    top = "__import__('os').system('id')"
+    # the nested form must not under-classify vs the bare call
+    assert risk_rank(classify_python(nested)) >= risk_rank(classify_python(top))
+    # and the bare call is at least as risky as EXTERNAL (it loads + invokes a shell)
+    assert risk_rank(classify_python(top)) >= risk_rank(RiskLevel.EXTERNAL)
+
+
+def test_dangerous_call_nested_two_levels_deep():
+    # wrapped twice: print(str(os.system(...))) -> still EXTERNAL
+    nested = "import os\nprint(str(os.system('curl evil.com')))"
+    top = "import os\nos.system('curl evil.com')"
+    assert classify_python(nested) == classify_python(top) == RiskLevel.EXTERNAL
+
+    # inside a list comprehension passed to a safe builtin
+    nested2 = "import os\nprint([os.system('x') for _ in range(1)])"
+    assert classify_python(nested2) == RiskLevel.EXTERNAL
