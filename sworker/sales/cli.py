@@ -509,6 +509,36 @@ def cmd_brief(args) -> int:
             targets_source=parsed.get("source_doc", ""), day=args.day,
         )
         due = F.due_today(repo, on=args.on)
+        # Gather the morning's "who / why / offer / next" from the ledger
+        # (read-only — no model, no egress). Top 8 by score; for each, the top
+        # pain point, the latest draft subject (the offer pitch), and the next
+        # action (approve+send if a draft is pending human approval).
+        who = []
+        for lead in repo.search_leads(limit=8):
+            lid = lead["id"]
+            quals = repo.qualifications_for(lid)
+            ds = repo.drafts(lead_id=lid)
+            top_draft = ds[0] if ds else None
+            qual = quals[0] if quals else None
+            why = ""
+            if qual and qual.reasoning:
+                # Distill the qualifier's verbose reasoning into one line:
+                # keep "score X from icp_fit=A, pain_signal=B, ...", drop the
+                # weights dict and the "re-derivable from evidence" boilerplate.
+                r = qual.reasoning
+                head = r.split("(weights")[0].strip()
+                if head.endswith("from"):
+                    head = head[:-4].strip()
+                why = head
+            who.append({
+                "company": lead.get("company_name", "?"),
+                "score": lead.get("score", 0.0),
+                "stage": lead.get("stage", "?"),
+                "industry": lead.get("industry", ""),
+                "why": why,
+                "offer": top_draft.subject if top_draft else "",
+                "pending": bool(top_draft and getattr(top_draft, "requires_approval", False)),
+            })
     finally:
         repo.close()
 
@@ -537,9 +567,24 @@ def cmd_brief(args) -> int:
         for b in report["bottlenecks"]:
             print(f"  - {b}")
     print(f"pending approvals: {report['pending_approvals']}")
+
+    # --- WHO / WHY / OFFER / NEXT --------------------------------------- #
     print("-" * 64)
-    print("open a lead:  sworker sales lead show <id>")
-    print("run the loop: sworker sales daily-run")
+    print("WHO TO TALK TO TODAY (ranked by qualification score)")
+    print("-" * 64)
+    for w in who:
+        flag = "  [draft awaiting approval]" if w["pending"] else ""
+        print(f"• {w['company']}  (score {w['score']:.1f}, {w['industry']}, {w['stage']}){flag}")
+        if w["why"]:
+            print(f"    WHY:   {w['why']}")
+        if w["offer"]:
+            print(f"    OFFER: {w['offer']}")
+    if not who:
+        print("  (no leads researched yet — run `sworker sales daily-run`)")
+    print("-" * 64)
+    print("WHAT NEXT: approve + send the drafted outreach, then await reply.")
+    print("  review a lead:  sworker sales lead show <id>")
+    print("  run the loop:   sworker sales daily-run")
     return 0
 # --------------------------------------------------------------------------- #
 def cmd_daily_run(args) -> int:
