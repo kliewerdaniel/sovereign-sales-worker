@@ -430,6 +430,51 @@ def cmd_outreach_approve(args) -> int:
     return 0
 
 
+def cmd_outreach_send(args) -> int:
+    """Human-in-loop egress: record a single approved draft as sent.
+
+    The repository's ``record_sent`` refuses any draft not already in the
+    ``approved`` state, so this command can only ever fire AFTER an operator
+    approved the draft — egress is never autonomous.
+    """
+    repo = _repo()
+    try:
+        res = repo.record_sent(args.draft_id, receipt=args.receipt or "cli")
+        print(f"sent {res['draft_id']} ({res['state']}); receipt={res['receipt']}")
+    except Exception as exc:
+        print(f"send failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        repo.close()
+    return 0
+
+
+def cmd_outreach_send_pending(args) -> int:
+    """Bulk human-in-loop egress: record every approved draft as sent.
+
+    This never touches ``draft``-state drafts — those still require an operator
+    approval first. It exists only to close out the loop once the operator has
+    signed off on the day's outreach.
+    """
+    repo = _repo()
+    try:
+        if not args.confirm:
+            print("refused: egress is irreversible — re-run with --confirm", file=sys.stderr)
+            return 1
+        sent, skipped = 0, 0
+        for d in repo.drafts(state="approved"):
+            try:
+                repo.record_sent(d.id, receipt=args.receipt or "cli-bulk")
+                sent += 1
+            except Exception as exc:  # a draft that failed the record_sent guard
+                print(f"  skip {d.id}: {exc}", file=sys.stderr)
+                skipped += 1
+        print(f"sent {sent} approved draft(s); skipped {skipped}")
+    finally:
+        repo.close()
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # followups due / schedule — thin operators over followup.due_today / schedule_for_lead
 # --------------------------------------------------------------------------- #
@@ -600,6 +645,9 @@ def cmd_brief(args) -> int:
         print("  (no leads researched yet — run `sworker sales daily-run`)")
     print("-" * 64)
     print("WHAT NEXT: review/approve the draft(s) flagged above, then send.")
+    print("  approve one:  sworker sales outreach approve <draft_id> --approved-by <you>")
+    print("  send one:     sworker sales outreach send <draft_id>")
+    print("  send all approved (one-shot): sworker sales outreach send-pending --confirm")
     print("  review a lead:  sworker sales lead show <id>")
     print("  run the loop:   sworker sales daily-run")
     return 0
@@ -613,9 +661,11 @@ def cmd_daily_run(args) -> int:
 
         researcher -> outreach -> qualifier -> analyst -> consolidated report
 
-    External egress (``sales_record_sent`` / ``sales_bulk_send``) is never
-    executed inside the loop; it surfaces as a PENDING APPROVAL the operator
-    resolves with ``sworker approve``.
+    External egress (``sales_record_sent``) is never executed inside the loop.
+    The loop drafts messages (``draft`` state); the operator closes the loop
+    with ``sworker sales outreach approve <draft_id>`` then
+    ``sworker sales outreach send <draft_id>`` (or ``send-pending --confirm``
+    for all approved drafts at once).
     """
     from ..config import get_worker
     from ..engine import WorkerEngine
@@ -898,6 +948,18 @@ def build_subparser(sub) -> None:
     op.add_argument("draft_id")
     op.add_argument("--approved-by", default="operator")
     op.set_defaults(ssub_func=cmd_outreach_approve)
+    op = out_sub.add_parser("send", help="record one approved draft as sent (egress, human-gated)")
+    op.add_argument("draft_id")
+    op.add_argument("--receipt", default="")
+    op.set_defaults(ssub_func=cmd_outreach_send)
+    op = out_sub.add_parser(
+        "send-pending",
+        help="record ALL approved drafts as sent (one-shot egress close-out)",
+    )
+    op.add_argument("--receipt", default="")
+    op.add_argument("--confirm", action="store_true",
+                    help="REQUIRED: egress is irreversible; without this the command refuses to run")
+    op.set_defaults(ssub_func=cmd_outreach_send_pending)
 
     p = sales_sub.add_parser("followups", help="follow-up operations: due / schedule")
     fu_sub = p.add_subparsers(dest="fsub", required=True)
