@@ -50,8 +50,32 @@ def _company_docs(ctx) -> List[str]:
     out = []
     for name in sorted(os.listdir(root)):
         if name.lower().endswith((".md", ".csv", ".txt", ".json")):
+            if _is_candidate_roster(os.path.join(root, name)):
+                # The candidate roster is the INPUT to discovery, not a knowledge
+                # source — its rows are per-company profiles that would
+                # cross-contaminate another lead's research. Never read it as a
+                # research source.
+                continue
             out.append(f"company/{name}")
     return out
+
+
+def _is_candidate_roster(path: str) -> bool:
+    """True if ``path`` is the candidate-roster CSV (input to discovery).
+
+    Identified by its ``name,website,...`` header so we never mistake a shared
+    benchmark/industry CSV for the roster and never research it into a lead.
+    """
+    import os
+
+    if not path.lower().endswith(".csv"):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            header = fh.readline().lower()
+    except OSError:
+        return False
+    return header.startswith("name,website") or ",website," in header
 
 
 def _domain_stem(domain: str) -> str:
@@ -72,9 +96,12 @@ def _scoped_sources_for_lead(ctx, lead_domain: str) -> List[str]:
     Per-lead scoping prevents cross-contamination: each company's local knowledge
     doc (``company/<stem>.md``) is matched by domain so one prospect's evidence
     does not inflate another's score. When a matching doc exists, only that doc
-    (plus any shared ``company/*.csv``/``*.txt``/``*.json``) is used; otherwise the
-    tool degrades to reading every permitted doc (the previous behaviour) so a
-    run never silently produces zero evidence.
+    (plus any genuinely shared ``company/*.txt``/``*.json`` data) is used; the
+    candidate roster (``candidates.csv``, the input to discovery) is never read
+    as a research source — its rows are per-company profiles that would
+    contaminate another lead. If no matching doc exists, the tool degrades to
+    reading every permitted knowledge doc (never the roster) so a run never
+    silently produces zero evidence.
     """
     import os
 
@@ -84,10 +111,12 @@ def _scoped_sources_for_lead(ctx, lead_domain: str) -> List[str]:
     for name in sorted(os.listdir(root)):
         low = name.lower()
         full = os.path.join(root, name)
+        if _is_candidate_roster(full):
+            continue  # roster is discovery input, not a knowledge source
         if low == f"{stem}.md":
             candidates.append((0, f"company/{name}", full))  # exact: top priority
             continue
-        if low.endswith((".csv", ".txt", ".json")):
+        if low.endswith((".txt", ".json")):
             candidates.append((1, f"company/{name}", full))   # shared data, generic
     candidates.sort(key=lambda t: t[0])
     chosen = [c[1] for c in candidates]

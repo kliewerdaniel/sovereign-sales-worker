@@ -65,6 +65,27 @@ def choose_step(sequences: Dict[str, List[Dict[str, Any]]], lead: Lead, touches:
     }
 
 
+def _first_excerpt(pain: "PainPoint", ev_by_id: Dict[str, Any]) -> str:
+    """The real, distinct source sentence behind a pain point's evidence.
+
+    Returns the first source excerpt attached to the pain point (trimmed to one
+    sentence). Falls back to empty so callers can use the category boilerplate
+    when no grounded excerpt exists.
+    """
+    for eid in pain.evidence_ids:
+        ev = ev_by_id.get(eid)
+        if ev is None or not getattr(ev, "excerpt", ""):
+            continue
+        ex = ev.excerpt.strip()
+        if not ex:
+            continue
+        m = re.match(r"^(.*?[.!?])\s", ex)
+        if m:
+            ex = m.group(1)
+        return ex
+    return ""
+
+
 def deterministic_body(
     company: Company,
     contact: Optional[Contact],
@@ -80,8 +101,14 @@ def deterministic_body(
     price = offer.get("offer_price") or 0.0
     price_text = f"${price:,.0f}" if price else "a fixed fee"
 
+    ev_by_id = {e.id: e for e in evidence}
     if top is not None:
-        observation = top.text
+        # Open with this prospect's OWN observed signal (the source excerpt the
+        # research engine actually read), not the shared category boilerplate —
+        # otherwise every draft begins with the identical "The same data appears
+        # to be re-keyed..." line regardless of which company it targets.
+        excerpt = _first_excerpt(top, ev_by_id)
+        observation = excerpt or top.text
     else:
         # Surface a real signal, never internal provenance bookkeeping.
         signal = next((e for e in evidence

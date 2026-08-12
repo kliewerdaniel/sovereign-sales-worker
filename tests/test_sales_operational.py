@@ -132,3 +132,72 @@ def test_seed_produces_researchable_fixture_set():
         assert f"{stem}.md" in docs, f"missing {stem}.md; have {sorted(docs)}"
     assert (company / "brightpath.md").exists()
     assert (company / "meridian-law.md").exists()
+
+
+def test_candidate_roster_is_not_a_research_source():
+    """The candidates.csv roster (input to discovery) must never be read into a
+    lead's research, or one company's profile row contaminates another's score.
+
+    Regression: a scoped-research bug treated every ``*.csv`` as "shared data"
+    and read the roster for every lead — Ridgeway's pain phrase leaked into
+    the roster is the discovery INPUT, not knowledge.
+    """
+    from sworker.sales.tools.base import _is_candidate_roster, _scoped_sources_for_lead
+    from types import SimpleNamespace
+
+    home = _make_workspace()
+    csv_path = home / "company" / "candidates.csv"
+    csv_path.write_text(
+        "name,website,industry,geography,team_size,contact_name,contact_role,"
+        "contact_email,notes\n"
+        "Acme,https://acme.example,Professional Services,X,10,a@acme.example,CEO,"
+        "a@acme.example,re-keyed data across systems\n"
+    )
+    assert _is_candidate_roster(str(csv_path)) is True
+    shared = home / "company" / "industry_benchmarks.csv"
+    shared.write_text("industry,avg_score\nProfessional Services,72\n")
+    assert _is_candidate_roster(str(shared)) is False
+
+    ctx = SimpleNamespace(resolve=lambda p, must_exist=False: str(home / p))
+    sources = _scoped_sources_for_lead(ctx, "https://acme.example")
+    assert "company/candidates.csv" not in sources, sources
+
+
+def test_draft_body_opens_with_per_lead_excerpt_not_boilerplate():
+    """The outreach opening line must use this prospect's own observed signal,
+    not the shared category boilerplate every company produces.
+
+    Two companies both matching the "manual re-entry" pain category would
+    otherwise open with the identical "The same data appears to be re-keyed..."
+    sentence. The draft must instead cite the distinct source excerpt.
+    """
+    import sworker.sales.outreach as O
+
+    home = _make_workspace()
+    repo = SalesRepository(os.environ["DAILYSALESOS_LEDGER"])
+    try:
+        acc = E.SalesEvidence(repo)
+        rows = fixture_rows()[:2]
+        D.discover(repo, rows, source_ref="fixtures", source="fixtures",
+                   run_id="cli", evidence=acc)
+        leads = repo.search_leads()
+        assert len(leads) == 2
+        for l in leads:
+            company = repo.get_company(l["company_id"])
+            stem = company.website.split("//")[-1].split(".")[0]
+            (home / "company" / f"{stem}.md").write_text(fixture_doc_for_domain(company.website))
+            doc = str(home / "company" / f"{stem}.md")
+            R.research_lead(repo, l["id"], [doc], evidence=E.SalesEvidence(repo), run_id="cli")
+            O.prepare(repo, l["id"], offer={"offer": "Audit", "offer_price": 3500.0},
+                      run_id="cli")
+
+        lines = []
+        for l in leads:
+            draft = repo.drafts(lead_id=l["id"])[0]
+            lines.append(next((ln for ln in draft.body.split("\n")
+                               if ln.startswith("Looking at")), ""))
+        assert len(set(lines)) == len(lines), lines
+        boiler = "The same data appears to be re-keyed"
+        assert all(boiler not in ln for ln in lines), lines
+    finally:
+        repo.close()
