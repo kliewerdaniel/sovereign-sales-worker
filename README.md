@@ -19,7 +19,7 @@ VERIFICATION → ARTIFACT → APPROVAL → FINAL → AUDIT
 
 Verified on **Python 3.14.6** (Homebrew, `/opt/homebrew/bin/python3.14`). Core has
 **zero third-party dependencies**; the only optional dep is
-[Hermes Atlas](https://github.com/NousResearch/hermes-atlas) for *compiled*
+[Hermes Atlas](https://github.com/kliewerdaniel/hermes-atlas) for *compiled*
 company-knowledge retrieval (it degrades to labelled grep without it).
 
 > **The substrate / instance framing.** `sworker` is the *substrate*: an engine that
