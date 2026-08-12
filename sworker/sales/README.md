@@ -89,7 +89,7 @@ python3.14 -m sworker verify --run <run_id>
 ## Tests
 
 `env -u PYTHONPATH -u PYTHONHOME python3.14 -m pytest tests/ -q -p no:cacheprovider`
-→ **499 passed** (490 baseline inherited + 9 sales adversarial).
+→ **502 passed** (490 baseline inherited + 12 sales tests).
 
 ## Constraints (non-negotiable)
 

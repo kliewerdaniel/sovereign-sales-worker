@@ -77,8 +77,9 @@ For each question a reviewer asks, which existing subsystem answers it:
 | What if the model is wrong? | `verify.py` + `degradation.py` | `recompute_*` fail → `PARTIAL_SUCCESS`; degradation logged |
 
 A full, screenshot-worthy Sales Worker walkthrough lives in
-[`docs/SALES_DEMO.md`](docs/SALES_DEMO.md); the analyst-worker demo is in
-[`docs/DEMO.md`](docs/DEMO.md).
+[`docs/SALES_DEMO.md`](docs/SALES_DEMO.md); the integration design + the
+runtime/worker boundary proof is in
+[`docs/SALES_INTEGRATION.md`](docs/SALES_INTEGRATION.md).
 
 ## Why it's built this way
 

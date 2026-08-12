@@ -219,47 +219,52 @@ is run from its project root (no install needed).
 ```bash
 cd sovereign-sales-worker
 export SOVEREIGNSALES_ROOT="$PWD/sworker/sales/corpus"
+
+# Optional: run the whole sales system under an isolated workspace root.
+# (Without --workspace, state lands under SWORKER_HOME / ./.sworker and the
+#  ledger under DAILYSALESOS_LEDGER — see §6d.)
+export SWORKER_HOME=/tmp/salestest
 export DAILYSALESOS_LEDGER=/tmp/salestest/company/Experiment_Ledger/experiments.db
 
 # 1. Project the sales ontology into the ledger + write worker YAMLs.
-/opt/homebrew/bin/python3.14 -m sworker sales init --force
+/opt/homebrew/bin/python3.14 -m sworker sales --workspace /tmp/salestest init --force
 
-# 2. Run the daily research loop (researcher: discover→research→qualify→report).
-/opt/homebrew/bin/python3.14 -m sworker run sales_researcher "execute DAILY_RESEARCH" \
-    -p DAILY_RESEARCH -i source=candidates.csv -i limit=20
+# 2. Seed deterministic demo companies + per-company knowledge (or `add` your own).
+/opt/homebrew/bin/python3.14 -m sworker sales --workspace /tmp/salestest seed
 
-# 3. Inspect the append-only audit trail.
-/opt/homebrew/bin/python3.14 -m sworker audit run_3def8575187f
+# 3. Run the full daily loop: researcher -> outreach -> qualifier -> analyst.
+/opt/homebrew/bin/python3.14 -m sworker sales --workspace /tmp/salestest daily-run --limit 20
 
-# 4. Re-derive every number from the ledger and re-check invariants.
-/opt/homebrew/bin/python3.14 -m sworker verify --run run_3def8575187f
+# 4. Inspect the append-only audit trail for any run the loop printed.
+/opt/homebrew/bin/python3.14 -m sworker audit run_<id>
+
+# 5. Re-derive every number from the ledger and re-check invariants.
+/opt/homebrew/bin/python3.14 -m sworker verify --run run_<id>
 ```
 
 Real `daily-run` output (deterministic fallback planner, no local LLM
-reachable) — two workers through one engine:
+reachable) — **four** workers through one engine:
 
 ```
 DAILY SALES REPORT
 date:          2026-08-12
 failed_sales_day: True
-  MISS prospects_researched   6/20
-  MISS outreach_sent          1/5
+  MISS prospects_researched   12/20
+  MISS outreach_sent          0/5
   MISS followups_sent         0/10
   MISS discoveries_completed  0/1
   MISS discoveries_scheduled  0/2
-  - 15 outreach draft(s) awaiting approval
-pending_approvals: 15
+  - 12 outreach draft(s) awaiting approval
+pending_approvals: 12
 
 PER-RUN SUMMARY
   sales_researcher   SUCCESS          ok=yes
-    inspect: sworker inspect run_3def8575187f
-    replay:  sworker replay run_3def8575187f
   sales_outreach     SUCCESS          ok=yes
-    inspect: sworker inspect run_4a9ef374e275
-    replay:  sworker replay run_4a9ef374e275
+  sales_qualifier    SUCCESS          ok=yes
+  sales_analyst      SUCCESS          ok=yes
 ```
 
-Because the loop ran headless with no reachable LLM and no human approval gate,
+Because the loop ran headless... (no reachable LLM and no human approval gate),
 no outreach was sent — the report correctly flags **Failed sales day** and the
 bottleneck list shows exactly which daily minimums were missed. Every count is
 re-derivable with `sworker verify` (check `sales_metrics_match_ledger`).
@@ -267,9 +272,27 @@ re-derivable with `sworker verify` (check `sales_metrics_match_ledger`).
 ## 6c. Test suite
 
 `env -u PYTHONPATH -u PYTHONHOME /opt/homebrew/bin/python3.14 -m pytest tests/ -q -p no:cacheprovider`
-→ **499 passed** (490 inherited baseline + 9 sales adversarial: capability
-isolation across all six workers, send-gate, score re-derivation, no-fabrication,
-brief/metrics consistency).
+→ **502 passed** (490 inherited baseline + 12 sales tests: operational fixtures,
+per-lead research scoping, `add`/`seed` capture, capability isolation across all
+six workers, send-gate, score re-derivation, no-fabrication, brief/metrics
+consistency).
+
+### 6d. Workspace isolation (`--workspace`)
+
+Every `sworker sales ...` subcommand accepts a top-level `--workspace <dir>`
+flag. It relocates **both** the runtime state and the sales ledger under one
+root for the duration of that invocation:
+
+| Env var set by `--workspace` | Points at |
+|---|---|
+| `SWORKER_HOME` | `<dir>` (worker YAMLs, `.state`, `artifacts`) |
+| `DAILYSALESOS_LEDGER` | `<dir>/company/Experiment_Ledger/experiments.db` |
+
+This is what makes the docs (CSV + per-company `*.md`) and the ledger co-locate
+under one directory — a fresh `--workspace /tmp/salestest` run needs no other
+env vars. The flag is authoritative for the command it prefixes; if you instead
+export `SWORKER_HOME` / `DAILYSALESOS_LEDGER` yourself (the env-first contract),
+they still apply and `--workspace` is simply omitted.
 
 ---
 
@@ -290,9 +313,12 @@ brief/metrics consistency).
    `sales_pipeline_legal`, `sales_metrics_match_ledger`).
 4. `tools/base.py` — 16 `Tool` subclasses at declared risk tiers, opt-in to the
    registry (40 tools total).
-5. `cli.py` (7 subcommands) + `web.py` (`/api/v1/sales`, `/sales` page) +
-   worker YAMLs + `DAILY_RESEARCH`/`DAILY_SALES_RUN` procedures.
-6. 9 adversarial sales tests; full suite green at 499.
+| `cli.py` (`sales` group: init/seed/add/csv-template/run/icp/pipeline/lead/
+  outreach/followups/metrics/verify/brief/daily-run — all workspace-aware via the
+  `--workspace` flag) + `web.py` (`/api/v1/sales`, `/sales` page with a
+  "Today — who to talk to" panel) + worker YAMLs + `DAILY_RESEARCH`/`DAILY_SALES_RUN`
+  procedures.
+6. 12 sales tests (operational + adversarial); full suite green at 502.
 7. This document, corrected to the **actual** tool names and a verified run.
 
 The next frontier (v0.4 Sales Intelligence) remains Atlas-backed

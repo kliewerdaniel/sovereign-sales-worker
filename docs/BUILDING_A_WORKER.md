@@ -204,14 +204,15 @@ boundary is enforced by a test, not just by convention.
 
 ```bash
 # 1. define (a YAML, or YAML + boundary package + opt-in tools)
-python -m sworker sales init --force        # installs sales worker + procedure templates
+python -m sworker sales --workspace /tmp/salestest init --force   # installs sales worker + procedure templates
 
 # 2. seed deterministic demo data (no private data / live APIs needed)
-python -m sworker sales seed
+python -m sworker sales --workspace /tmp/salestest seed
 
-# 3. run the full daily loop through the runtime — two worker instances,
-#    one engine, external egress held for approval
-python -m sworker sales daily-run --source candidates.csv --limit 3
+# 3. run the full daily loop through the runtime — four worker instances
+#    (researcher -> outreach -> qualifier -> analyst), one engine, external
+#    egress held for approval
+python -m sworker sales --workspace /tmp/salestest daily-run --source candidates.csv --limit 3
 
 # 4. inspect what any run actually did (reconstructable without a model)
 python -m sworker inspect run_<id>

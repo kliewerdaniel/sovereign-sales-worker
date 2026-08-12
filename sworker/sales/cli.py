@@ -30,6 +30,35 @@ def _repo() -> SalesRepository:
     return SalesRepository(default_ledger_path())
 
 
+def _select_workspace(args) -> None:
+    """Honour an explicit --workspace by pointing the platform at it.
+
+    The core platform resolves its workspace from ``SWORKER_HOME`` (falling back
+    to ``./.sworker``). The sales ledger, however, is resolved separately by
+    ``default_ledger_path()`` from ``DAILYSALESOS_LEDGER`` (falling back to
+    ``<cwd>/company/Experiment_Ledger/experiments.db``). Setting *only* one would
+    split the docs (CSV/knowledge under the workspace) from the ledger (under
+    cwd) — exactly the disconnect we must avoid. So when ``--workspace`` is given,
+    we point **both** at the same root and make the flag authoritative for this
+    run (it overrides any stale ``SWORKER_HOME`` left in the environment):
+
+        SWORKER_HOME          -> <ws>
+        DAILYSALESOS_LEDGER   -> <ws>/company/Experiment_Ledger/experiments.db
+
+    With no ``--workspace`` the existing env vars (and their defaults) apply
+    unchanged, so the env-first contract still holds for callers that set them
+    directly.
+    """
+    ws = getattr(args, "workspace", None)
+    if not ws:
+        return
+    ws = os.path.abspath(os.path.expanduser(ws))
+    os.environ["SWORKER_HOME"] = ws
+    os.environ["DAILYSALESOS_LEDGER"] = os.path.join(
+        ws, "company", "Experiment_Ledger", "experiments.db"
+    )
+
+
 def _sales_docs_root() -> str:
     """Best-effort path to the consulting corpus (read-only source of truth)."""
     env = os.environ.get("SOVEREIGNSALES_ROOT") or os.environ.get("DAILYSALESOS_ROOT", "")
@@ -516,12 +545,11 @@ def cmd_brief(args) -> int:
 def cmd_daily_run(args) -> int:
     """§8 — the Sales Worker's daily run, orchestrated through the runtime.
 
-    This is NOT a second agent framework. It runs the two worker instances that
-    already exist (``sales_researcher`` and ``sales_outreach``) through the same
-    ``WorkerEngine`` any other worker would use, then consolidates their reports.
+    This is NOT a second agent framework. It runs the sales worker instances
+    that already exist through the same ``WorkerEngine`` any other worker would
+    use, then consolidates their reports:
 
-        worker load -> knowledge load -> pipeline inspect -> qualify ->
-        recommended actions -> policy respects external egress -> approval gate
+        researcher -> outreach -> qualifier -> analyst -> consolidated report
 
     External egress (``sales_record_sent`` / ``sales_bulk_send``) is never
     executed inside the loop; it surfaces as a PENDING APPROVAL the operator
@@ -599,6 +627,28 @@ def cmd_daily_run(args) -> int:
         plan.append({"worker": "sales_qualifier", "run_id": "", "status": "ERROR",
                      "summary": str(exc), "ok": "no", "pending": []})
 
+    # 2.75) Analyst pass — re-derive the morning metrics report straight from
+    # the ledger (read + re-derivation only; never mutates or sends). This is
+    # what makes the consolidated daily report below authoritative rather than a
+    # hand-rolled copy, and it exercises the same path `sworker sales run
+    # sales_analyst` would. It runs AFTER research/qualification so the numbers
+    # reflect the freshly-updated pipeline.
+    try:
+        w = get_worker("sales_analyst")
+        eng = WorkerEngine(w, store)
+        res = eng.run("generate the daily metrics report from the ledger", on_event=_printer)
+        plan.append({
+            "worker": "sales_analyst",
+            "run_id": res.run.id,
+            "status": res.status.value,
+            "summary": res.summary,
+            "ok": "yes" if res.ok else "no",
+            "pending": [a["id"] for a in res.pending_approvals],
+        })
+    except Exception as exc:
+        plan.append({"worker": "sales_analyst", "run_id": "", "status": "ERROR",
+                     "summary": str(exc), "ok": "no", "pending": []})
+
     # 3) Consolidated daily report straight from the ledger (re-derivable).
     try:
         repo = _repo()
@@ -658,9 +708,10 @@ def cmd_sales_run(args) -> int:
     strategist / researcher / outreach). Resolves the worker from the workspace
     and drives it through the same WorkerEngine daily-run uses.
 
-    This is the operator's handle to the four workers that are not part of the
-    automatic daily loop: qualifier (ranked shortlist), analyst (morning report),
-    followup (SLA watchdog), strategist (gated stage moves + draft approvals).
+    This is the operator's handle to the workers that are not part of the
+    automatic daily loop: followup (SLA watchdog), strategist (gated stage
+    moves + draft approvals). (qualifier and analyst also run inside daily-run,
+    but can be invoked on demand here too.)
     """
     from ..config import get_worker
     from ..engine import WorkerEngine
@@ -696,18 +747,36 @@ def cmd_templates(args) -> int:
     return 0
 
 
+def cmd_sales_dispatch(args) -> int:
+    """Single entry point for the ``sales`` group.
+
+    Applies the optional ``--workspace`` override (via ``_select_workspace``)
+    before delegating to the resolved subcommand. This keeps every sales
+    subcommand workspace-aware without each one re-implementing the env wiring.
+    """
+    _select_workspace(args)
+    return args.ssub_func(args)
+
+
 def build_subparser(sub) -> None:
-    """Register the ``sales`` group onto the main argparse subparsers."""
+    """Register the ``sales`` group onto the main argparse subparsers.
+
+    Every leaf subcommand is routed through ``cmd_sales_dispatch`` so the
+    ``--workspace`` flag (sets ``SWORKER_HOME``) is honoured uniformly.
+    """
     sp = sub.add_parser("sales", help="§71 local-first sales operating system")
+    sp.add_argument("--workspace", default="",
+                    help="override the workspace root (sets SWORKER_HOME; ledger + state live under it)")
+    sp.set_defaults(func=cmd_sales_dispatch)
     sales_sub = sp.add_subparsers(dest="ssub", required=True)
 
     p = sales_sub.add_parser("init", help="install sales worker templates + compile ICP")
     p.add_argument("--force", action="store_true")
-    p.set_defaults(func=cmd_init)
+    p.set_defaults(ssub_func=cmd_init)
 
     p = sales_sub.add_parser("seed", help="§11 materialise deterministic demo candidates + knowledge")
     p.add_argument("--csv-name", default="candidates.csv")
-    p.set_defaults(func=cmd_seed)
+    p.set_defaults(ssub_func=cmd_seed)
 
     p = sales_sub.add_parser("add", help="capture one prospect now (writes candidates.csv + a scoped knowledge doc)")
     p.add_argument("name")
@@ -721,77 +790,77 @@ def build_subparser(sub) -> None:
     p.add_argument("--notes")
     p.add_argument("--doc", help="path to a real company knowledge markdown to attach")
     p.add_argument("--research", action="store_true", help="also research + score the lead immediately")
-    p.set_defaults(func=cmd_add)
+    p.set_defaults(ssub_func=cmd_add)
 
     p = sales_sub.add_parser("csv-template", help="print the candidates.csv header columns")
-    p.set_defaults(func=cmd_csv_template)
+    p.set_defaults(ssub_func=cmd_csv_template)
 
     p = sales_sub.add_parser("run", help="run any installed sales worker on demand (analyst/qualifier/followup/strategist/...)")
     p.add_argument("worker")
     p.add_argument("prompt", nargs="?", default="")
-    p.set_defaults(func=cmd_sales_run)
+    p.set_defaults(ssub_func=cmd_sales_run)
 
     p = sales_sub.add_parser("icp", help="show / recompile the active ICP")
     p.add_argument("--recompile", action="store_true")
-    p.set_defaults(func=cmd_icp)
+    p.set_defaults(ssub_func=cmd_icp)
 
     p = sales_sub.add_parser("pipeline", help="list leads by stage")
     p.add_argument("--stage", default="")
     p.add_argument("--summary", action="store_true")
-    p.set_defaults(func=cmd_pipeline)
+    p.set_defaults(ssub_func=cmd_pipeline)
 
     p = sales_sub.add_parser("lead", help="lead operations: show / discover / research / qualify")
     lead_sub = p.add_subparsers(dest="lsub", required=True)
     lp = lead_sub.add_parser("show", help="full record for one lead")
     lp.add_argument("lead_id")
-    lp.set_defaults(func=cmd_lead)
+    lp.set_defaults(ssub_func=cmd_lead)
     lp = lead_sub.add_parser("discover", help="ingest candidates from a CSV/prospects")
     lp.add_argument("source", help="candidate CSV under company/ or 'prospects'")
     lp.add_argument("--limit", type=int, default=0)
-    lp.set_defaults(func=cmd_lead_discover)
+    lp.set_defaults(ssub_func=cmd_lead_discover)
     lp = lead_sub.add_parser("research", help="research one lead from permitted docs")
     lp.add_argument("lead_id")
     lp.add_argument("--sources", nargs="*", default=[])
-    lp.set_defaults(func=cmd_lead_research)
+    lp.set_defaults(ssub_func=cmd_lead_research)
     lp = lead_sub.add_parser("qualify", help="score one lead deterministically")
     lp.add_argument("lead_id")
-    lp.set_defaults(func=cmd_lead_qualify)
+    lp.set_defaults(ssub_func=cmd_lead_qualify)
 
     p = sales_sub.add_parser("outreach", help="outreach operations: draft / approve")
     out_sub = p.add_subparsers(dest="osub", required=True)
     op = out_sub.add_parser("draft", help="draft outreach for one lead (needs approval to send)")
     op.add_argument("lead_id")
     op.add_argument("--channel", default="email")
-    op.set_defaults(func=cmd_outreach_draft)
+    op.set_defaults(ssub_func=cmd_outreach_draft)
     op = out_sub.add_parser("approve", help="approve a draft for sending")
     op.add_argument("draft_id")
     op.add_argument("--approved-by", default="operator")
-    op.set_defaults(func=cmd_outreach_approve)
+    op.set_defaults(ssub_func=cmd_outreach_approve)
 
     p = sales_sub.add_parser("followups", help="follow-up operations: due / schedule")
     fu_sub = p.add_subparsers(dest="fsub", required=True)
     fp = fu_sub.add_parser("due", help="today's follow-ups + SLA-overdue leads")
     fp.add_argument("--on", default="")
-    fp.set_defaults(func=cmd_followups_due)
+    fp.set_defaults(ssub_func=cmd_followups_due)
     fp = fu_sub.add_parser("schedule", help="schedule documented next action for a lead")
     fp.add_argument("lead_id")
-    fp.set_defaults(func=cmd_followups_schedule)
+    fp.set_defaults(ssub_func=cmd_followups_schedule)
 
     p = sales_sub.add_parser("metrics", help="daily sales report vs documented targets")
     p.add_argument("--day", default="")
     p.add_argument("--markdown", action="store_true")
-    p.set_defaults(func=cmd_metrics)
+    p.set_defaults(ssub_func=cmd_metrics)
 
     p = sales_sub.add_parser("verify", help="run sales verification checks on the ledger")
     p.add_argument("--day", default="")
-    p.set_defaults(func=cmd_verify)
+    p.set_defaults(ssub_func=cmd_verify)
 
     p = sales_sub.add_parser("brief", help="daily operations center: metrics + pipeline + SLA + approvals")
     p.add_argument("--day", default="")
     p.add_argument("--on", default="")
-    p.set_defaults(func=cmd_brief)
+    p.set_defaults(ssub_func=cmd_brief)
 
     p = sales_sub.add_parser("daily-run", help="§8 run the Sales Worker's full daily loop")
     p.add_argument("--source", default="candidates.csv")
     p.add_argument("--limit", type=int, default=20)
-    p.set_defaults(func=cmd_daily_run)
+    p.set_defaults(ssub_func=cmd_daily_run)
