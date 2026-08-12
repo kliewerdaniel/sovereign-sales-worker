@@ -180,10 +180,43 @@ def render_sales(store: WorkerStore, ws, role: str = "", lead_id: str = "") -> s
             )
             summary = repo.pipeline_summary()
             leads = repo.search_leads(limit=200)
+            # "Today — who to talk to" panel data (repo still open): ranked leads
+            # with the top pain, the qualification reasoning (why), and the draft
+            # offer (what). Surfaces the operating answer directly in the browser.
+            ranked = sorted(
+                [l for l in leads if (l.get("score") or 0) > 0],
+                key=lambda l: (l.get("score") or 0), reverse=True,
+            )
+            today_cells = []
+            for l in ranked[:8]:
+                lid = l["id"]
+                lpp = sorted(
+                    repo.pain_points_for(lid),
+                    key=lambda p: (p.to_dict().get("opportunity_score") or 0),
+                    reverse=True,
+                )
+                top_pain = lpp[0].to_dict().get("text", "") if lpp else "—"
+                quals = repo.qualifications_for(lid)
+                reasoning = quals[-1].to_dict().get("reasoning", "") if quals else ""
+                reasoning = (reasoning.split(". ", 1)[0] + ".") if reasoning else ""
+                drafts = repo.drafts(lead_id=lid)
+                offer = drafts[0].to_dict().get("subject", "") if drafts else ""
+                today_cells.append(
+                    f"<tr><td><b>{l.get('score', 0):.0f}</b></td>"
+                    f"<td><a href='/sales/lead/{_esc(lid)}'>{_esc(l.get('company_name', ''))}</a></td>"
+                    f"<td>{_esc(l.get('industry', ''))}</td>"
+                    f"<td>{_esc(top_pain[:70])}</td>"
+                    f"<td>{_esc(reasoning[:90])}</td>"
+                    f"<td>{_esc(offer)}</td>"
+                    f"<td>{_esc(l.get('stage', ''))}</td></tr>"
+                )
+            today_rows = "".join(today_cells) or (
+                "<tr><td colspan=7><i>no qualified leads yet — run the daily loop</i></td></tr>"
+            )
         finally:
             repo.close()
     except Exception as e:  # pragma: no cover
-        report, summary, leads = {"error": str(e)}, [], []
+        report, summary, leads, today_rows = {"error": str(e)}, [], [], ""
     # Lead list table (links to the per-lead detail view).
     lrows = "".join(
         f"<tr><td><a href='/sales/lead/{_esc(l['id'])}'>{_esc(l['id'])}</a></td>"
@@ -222,6 +255,9 @@ def render_sales(store: WorkerStore, ws, role: str = "", lead_id: str = "") -> s
         f"<a href='/dashboard'>dashboard</a> · <a href='/procedures'>procedures</a></span>"
         f"<h2>Daily Sales OS — {_esc(report.get('date', ''))}</h2>"
         f"<p>Daily minimums: <b style='color:{'#e07' if failed else '#7c7'}'>{_esc(badge)}</b></p>"
+        f"<h2>Today — who to talk to</h2>"
+        f"<table><tr><th>score</th><th>company</th><th>industry</th><th>top pain</th>"
+        f"<th>why</th><th>offer (draft)</th><th>stage</th></tr>{today_rows}</table>"
         f"<h2>Pipeline by stage</h2><table><tr><th>stage</th><th>leads</th></tr>{plines}</table>"
         f"<h2>Activity vs targets</h2><table><tr><th>metric</th><th>actual</th><th>target</th><th>met</th></tr>{vrows}</table>"
         f"<h2>Leads ({len(leads)})</h2><table><tr><th>id</th><th>company</th><th>industry</th><th>stage</th><th>score</th></tr>{lrows}</table>"

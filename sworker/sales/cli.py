@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 import sys
 from typing import Any, Dict, List
@@ -46,47 +47,172 @@ def _jprint(obj: Any) -> None:
 # --------------------------------------------------------------------------- #
 # seed — Phase 11: deterministic demo data so the success demo needs no private
 # data or live APIs. Idempotent; writes only into the workspace company/ dir.
+# Each company ships its own local knowledge doc (company/<domain-stem>.md) so
+# the research tool scopes evidence per lead (no cross-contamination).
 # --------------------------------------------------------------------------- #
-_DEMO_CANDIDATES = [
-    {"name": "Meridian Law Group", "website": "https://meridian-law.example",
-     "industry": "Law & Accounting", "notes": "Document-heavy practice; privacy-critical. ICP: Law & Accounting."},
-    {"name": "Northwind Manufacturing", "website": "https://northwind-mfg.example",
-     "industry": "Manufacturing", "notes": "SMB manufacturer; quoting + tribal knowledge ops."},
-    {"name": "Brightpath Consulting", "website": "https://brightpath.example",
-     "industry": "Professional Services", "notes": "10-200 person firm; SaaS sprawl + reporting burden."},
-]
+from .fixtures import fixture_rows, fixture_doc_for_domain  # noqa: E402
+
+_DEMO_CANDIDATES = fixture_rows()
+
+
+def _domain_stem(domain: str) -> str:
+    d = (domain or "").strip().lower()
+    d = re.sub(r"^https?://", "", d)
+    d = re.sub(r"^www\.", "", d).strip("/")
+    d = d.split("/")[0]
+    return d.split(".")[0]
 
 
 def cmd_seed(args) -> int:
-    """Materialise a deterministic demo company + candidate list.
+    """Materialise a deterministic demo company set + candidate list.
 
     Pure, offline, and reproducible: running it twice yields byte-identical
     files. This is what makes ``sworker sales daily-run`` demonstrable from a
-    clean environment without private CRMs or live APIs.
+    clean environment without private CRMs or live APIs — and why the fixture
+    companies each carry their own knowledge doc so scores differentiate.
     """
     ws = default_workspace()
     ws.ensure()
     company = ws.company_dir
     os.makedirs(company, exist_ok=True)
     csv_path = os.path.join(company, args.csv_name)
+    fieldnames = ["name", "website", "industry", "geography", "team_size",
+                  "contact_name", "contact_role", "contact_email", "notes"]
     with open(csv_path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["name", "website", "industry", "notes"])
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
         w.writeheader()
         for row in _DEMO_CANDIDATES:
-            w.writerow(row)
-    # A minimal company-knowledge doc so research has something to read.
-    kdoc = os.path.join(company, "meridian_law.md")
+            w.writerow({k: row.get(k, "") for k in fieldnames})
+    # One knowledge doc per company, named by domain stem so research scopes it.
+    written = []
+    for row in _DEMO_CANDIDATES:
+        stem = _domain_stem(row["website"])
+        kdoc = os.path.join(company, f"{stem}.md")
+        with open(kdoc, "w") as fh:
+            fh.write(fixture_doc_for_domain(row["website"]))
+        written.append(f"{stem}.md")
+    print(f"seeded: {csv_path} ({len(_DEMO_CANDIDATES)} candidates)")
+    print(f"seeded: {len(written)} company knowledge docs (company/<stem>.md)")
+    print("next:   python -m sworker sales daily-run --source " + args.csv_name)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+
+
+def _append_candidate(csv_path: str, row: Dict[str, str]) -> None:
+    """Append one candidate row to the shared candidates.csv, writing the header
+    on first creation. Idempotent at the file level (discover handles dedup)."""
+    fieldnames = ["name", "website", "industry", "geography", "team_size",
+                  "contact_name", "contact_role", "contact_email", "notes"]
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
+        if write_header:
+            w.writeheader()
+        w.writerow({k: row.get(k, "") for k in fieldnames})
+
+
+def _write_skeleton_doc(kdoc: str, name: str, row: Dict[str, str]) -> None:
+    """Write a fill-in knowledge doc so the research tool has a scoped source.
+
+    The user edits this file to add the signals the research engine recognises
+    (team size, tooling, urgency, budget, a contact, documented pain). Until
+    then, research degrades gracefully (no fabricated evidence).
+    """
+    industry = row.get("industry") or "Unknown"
+    contact = row.get("contact_name") or "UNKNOWN"
+    email = row.get("contact_email") or "UNKNOWN"
+    size = row.get("team_size") or "UNKNOWN"
     with open(kdoc, "w") as fh:
         fh.write(
-            "# Meridian Law Group — Company Knowledge\n\n"
-            "Document-heavy law practice. Contracts assembled by hand; client "
-            "matter knowledge lives in one partner's head.\n"
-            "Buying intent: evaluating local-first document automation after a "
-            "Q3 cost review of SaaS spend.\n"
+            f"# {name} — Company Knowledge\n\n"
+            f"Industry: {industry}. Team size: {size}. Geography: {row.get('geography') or 'UNKNOWN'}.\n\n"
+            f"Contact: {contact} <{email}>\n\n"
+            "TODO: add company knowledge the research engine can read. It matches "
+            "these signals:\n"
+            "- Team / company size (e.g. \"45 employees\", \"120-person team\")\n"
+            "- Tooling and SaaS sprawl (e.g. \"too many SaaS tools\", \"a dozen spreadsheets\")\n"
+            "- Documented pain (e.g. \"assembled by hand\", \"tribal knowledge\", \"re-keyed into three systems\")\n"
+            "- Urgency (e.g. \"after the cost review\", \"before renewals\")\n"
+            "- Budget (e.g. \"budgeted $9,500\", \"set aside $12,000\")\n"
+            "- Coverage gap (e.g. \"no one covers the queue after hours\")\n\n"
+            "Every factual claim should be a concrete, attributable statement. The "
+            "engine derives pain points and signals from these phrases.\n"
         )
-    print(f"seeded: {csv_path} ({len(_DEMO_CANDIDATES)} candidates)")
-    print(f"seeded: {kdoc}")
-    print("next:   python -m sworker sales daily-run --source " + args.csv_name)
+
+
+def cmd_add(args) -> int:
+    """Low-friction manual capture of a single prospect.
+
+    Writes the candidate into ``company/candidates.csv``, creates a scoped
+    knowledge doc (``company/<domain-stem>.md`` — a skeleton you fill in, or pass
+    ``--doc`` to attach a real one), and discovers the lead into the ledger.
+    With ``--research`` it also runs research + scoring immediately so the new
+    lead lands in the pipeline already qualified.
+    """
+    ws = default_workspace()
+    ws.ensure()
+    company = ws.company_dir
+    os.makedirs(company, exist_ok=True)
+    stem = _domain_stem(args.website)
+    row = {
+        "name": args.name,
+        "website": args.website,
+        "industry": args.industry or "",
+        "geography": args.geography or "",
+        "team_size": str(args.team_size or ""),
+        "contact_name": args.contact_name or "",
+        "contact_role": args.contact_role or "",
+        "contact_email": args.contact_email or "",
+        "notes": args.notes or "",
+    }
+    csv_path = os.path.join(company, "candidates.csv")
+    _append_candidate(csv_path, row)
+    kdoc = os.path.join(company, f"{stem}.md")
+    if args.doc:
+        shutil.copyfile(args.doc, kdoc)
+        print(f"attached knowledge doc: {kdoc}")
+    elif not os.path.exists(kdoc):
+        _write_skeleton_doc(kdoc, args.name, row)
+        print(f"created skeleton knowledge doc: {args.name} (fill it in, then research)")
+    repo = _repo()
+    try:
+        acc = E.SalesEvidence(repo)
+        res = D.discover(repo, [row], source_ref="manual-add", source="manual",
+                         run_id="cli", evidence=acc)
+        for c in res["created"]:
+            print(f"added: {c['company']} ({c['lead_id']}) industry={c.get('industry', '')}")
+        if res["duplicate_count"]:
+            print(f"skipped {res['duplicate_count']} duplicate (already in ledger)")
+        if res["rejected_count"]:
+            print(f"rejected {res['rejected_count']}: {res['rejected']}")
+        lead_id = res["created"][0]["lead_id"] if res["created"] else None
+    finally:
+        repo.close()
+    if lead_id and args.research:
+        repo = _repo()
+        try:
+            acc = E.SalesEvidence(repo)
+            src = os.path.join(company, f"{stem}.md")
+            if os.path.isfile(src):
+                r2 = R.research_lead(repo, lead_id, [src], evidence=acc, run_id="cli")
+                print(f"researched: {r2['evidence_count']} evidence, "
+                      f"{len(r2['pain_points'])} pain point(s)")
+            q = Q.evaluate(repo, lead_id, run_id="cli")
+            print(f"score: {q.score} ({q.tier.value}) v{q.version}")
+        finally:
+            repo.close()
+    return 0
+
+
+def cmd_csv_template(args) -> int:
+    """Print the candidates.csv header so the user knows the columns."""
+    cols = ["name", "website", "industry", "geography", "team_size",
+            "contact_name", "contact_role", "contact_email", "notes"]
+    print(",".join(cols))
+    print("# Provide one row per prospect. website domain names the knowledge doc "
+          "(company/<domain-stem>.md).")
     return 0
 
 
@@ -454,6 +580,25 @@ def cmd_daily_run(args) -> int:
                      "summary": str(exc), "ok": "no", "pending": []})
         pending = []
 
+    # 2.5) Qualification pass — produce the ranked "who to talk to" shortlist
+    # from the evidence the researcher gathered. Read + append-only write; no
+    # egress. This is what makes the morning brief answer "who" directly.
+    try:
+        w = get_worker("sales_qualifier")
+        eng = WorkerEngine(w, store)
+        res = eng.run("rank the pipeline by qualification score", on_event=_printer)
+        plan.append({
+            "worker": "sales_qualifier",
+            "run_id": res.run.id,
+            "status": res.status.value,
+            "summary": res.summary,
+            "ok": "yes" if res.ok else "no",
+            "pending": [a["id"] for a in res.pending_approvals],
+        })
+    except Exception as exc:
+        plan.append({"worker": "sales_qualifier", "run_id": "", "status": "ERROR",
+                     "summary": str(exc), "ok": "no", "pending": []})
+
     # 3) Consolidated daily report straight from the ledger (re-derivable).
     try:
         repo = _repo()
@@ -508,6 +653,39 @@ def _printer(event: str, payload: Dict[str, Any]) -> None:
         print(f"  ⏳ approval requested: {payload.get('id')} [{payload.get('risk')}] {payload.get('summary')}")
 
 
+def cmd_sales_run(args) -> int:
+    """Run any installed sales worker on demand (analyst / qualifier / followup /
+    strategist / researcher / outreach). Resolves the worker from the workspace
+    and drives it through the same WorkerEngine daily-run uses.
+
+    This is the operator's handle to the four workers that are not part of the
+    automatic daily loop: qualifier (ranked shortlist), analyst (morning report),
+    followup (SLA watchdog), strategist (gated stage moves + draft approvals).
+    """
+    from ..config import get_worker
+    from ..engine import WorkerEngine
+    from ..store import WorkerStore  # noqa: F401
+
+    store = WorkerStore(default_workspace().state_dir)
+    try:
+        w = get_worker(args.worker)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    eng = WorkerEngine(w, store)
+    try:
+        res = eng.run(args.prompt or f"execute {w.name}", on_event=_printer)
+    except Exception as exc:  # operator-invoked: surface, don't crash the shell
+        print(f"{args.worker} run error: {exc}", file=sys.stderr)
+        return 1
+    print(f"\n{args.worker}: {res.status.value} (ok={'yes' if res.ok else 'no'})")
+    if res.run.id:
+        print(f"  inspect: sworker inspect {res.run.id}")
+    for a in res.pending_approvals:
+        print(f"  approval: {a['id']} [{a['risk']}] {a['summary']}")
+    return 0 if res.ok else 1
+
+
 # --------------------------------------------------------------------------- #
 # templates — list bundled worker YAMLs + DAILY_SALES_RUN
 # --------------------------------------------------------------------------- #
@@ -530,6 +708,28 @@ def build_subparser(sub) -> None:
     p = sales_sub.add_parser("seed", help="§11 materialise deterministic demo candidates + knowledge")
     p.add_argument("--csv-name", default="candidates.csv")
     p.set_defaults(func=cmd_seed)
+
+    p = sales_sub.add_parser("add", help="capture one prospect now (writes candidates.csv + a scoped knowledge doc)")
+    p.add_argument("name")
+    p.add_argument("website")
+    p.add_argument("--industry")
+    p.add_argument("--geography")
+    p.add_argument("--team-size", dest="team_size", type=int)
+    p.add_argument("--contact-name", dest="contact_name")
+    p.add_argument("--contact-role", dest="contact_role")
+    p.add_argument("--contact-email", dest="contact_email")
+    p.add_argument("--notes")
+    p.add_argument("--doc", help="path to a real company knowledge markdown to attach")
+    p.add_argument("--research", action="store_true", help="also research + score the lead immediately")
+    p.set_defaults(func=cmd_add)
+
+    p = sales_sub.add_parser("csv-template", help="print the candidates.csv header columns")
+    p.set_defaults(func=cmd_csv_template)
+
+    p = sales_sub.add_parser("run", help="run any installed sales worker on demand (analyst/qualifier/followup/strategist/...)")
+    p.add_argument("worker")
+    p.add_argument("prompt", nargs="?", default="")
+    p.set_defaults(func=cmd_sales_run)
 
     p = sales_sub.add_parser("icp", help="show / recompile the active ICP")
     p.add_argument("--recompile", action="store_true")

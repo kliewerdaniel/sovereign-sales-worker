@@ -16,6 +16,7 @@ Per ``docs/SALES_INTEGRATION.md`` §2, risk assignment is:
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Dict, List
 
@@ -51,6 +52,49 @@ def _company_docs(ctx) -> List[str]:
         if name.lower().endswith((".md", ".csv", ".txt", ".json")):
             out.append(f"company/{name}")
     return out
+
+
+def _domain_stem(domain: str) -> str:
+    """Normalised stem of a domain, used to match a company's local doc.
+
+    e.g. ``https://brightpath.example`` -> ``brightpath``.
+    """
+    d = (domain or "").strip().lower()
+    d = re.sub(r"^https?://", "", d)
+    d = re.sub(r"^www\.", "", d).strip("/")
+    d = d.split("/")[0]
+    return d.split(".")[0]
+
+
+def _scoped_sources_for_lead(ctx, lead_domain: str) -> List[str]:
+    """Resolve the documents to research one lead with.
+
+    Per-lead scoping prevents cross-contamination: each company's local knowledge
+    doc (``company/<stem>.md``) is matched by domain so one prospect's evidence
+    does not inflate another's score. When a matching doc exists, only that doc
+    (plus any shared ``company/*.csv``/``*.txt``/``*.json``) is used; otherwise the
+    tool degrades to reading every permitted doc (the previous behaviour) so a
+    run never silently produces zero evidence.
+    """
+    import os
+
+    root = ctx.resolve("company", must_exist=True)
+    stem = _domain_stem(lead_domain)
+    candidates = []
+    for name in sorted(os.listdir(root)):
+        low = name.lower()
+        full = os.path.join(root, name)
+        if low == f"{stem}.md":
+            candidates.append((0, f"company/{name}", full))  # exact: top priority
+            continue
+        if low.endswith((".csv", ".txt", ".json")):
+            candidates.append((1, f"company/{name}", full))   # shared data, generic
+    candidates.sort(key=lambda t: t[0])
+    chosen = [c[1] for c in candidates]
+    if not chosen:
+        # Degraded fallback: read everything permitted.
+        return _company_docs(ctx)
+    return chosen
 
 
 # ---------------------------------------------------------------------------
@@ -248,11 +292,12 @@ class SalesResearchTool(Tool):
         acc = E.SalesEvidence(repo)
         lead_id = args.get("lead_id") or ""
         sources = args.get("sources") or []
-        if not sources:
-            # No explicit sources: research every permitted markdown doc under company/.
-            sources = _company_docs(ctx)
         if lead_id == "all" or lead_id == "":
-            # Research every lead that has no qualifying evidence yet.
+            # Research every lead that has not been *researched* yet. Gating on
+            # pain points (research output) rather than any evidence, because
+            # `discover` already attaches provenance/contact_info claims — those
+            # are not research, and would otherwise make every lead look
+            # "already researched" and skip the real pain-point analysis.
             leads = repo.search_leads()
             if not leads:
                 return ToolResult(ok=True, output="no leads to research", data={"researched": []})
@@ -260,9 +305,14 @@ class SalesResearchTool(Tool):
             done = []
             for lead in leads:
                 lid = lead["id"]
-                if repo.evidence_for(lid):
-                    continue  # already researched
-                paths = [ctx.resolve(s, must_exist=True) for s in sources if ctx.resolve(s, must_exist=False)]
+                if repo.pain_points_for(lid):
+                    continue  # already researched (pain points = research output)
+                # Scope sources to this lead's own company doc so one prospect's
+                # evidence never inflates another's score (fallback: all docs).
+                company = repo.get_company(lead["company_id"]) if lead.get("company_id") else None
+                dom = company.website if company else ""
+                scoped = _scoped_sources_for_lead(ctx, dom) if not sources else sources
+                paths = [ctx.resolve(s, must_exist=True) for s in scoped if ctx.resolve(s, must_exist=False)]
                 if not paths:
                     continue
                 res = R.research_lead(repo, lid, paths, evidence=acc, run_id=ctx.run_id)
@@ -273,6 +323,12 @@ class SalesResearchTool(Tool):
                 ok=True, output=f"researched {len(done)} lead(s): {total_ev} evidence, {total_pp} pain point(s)",
                 data={"researched": done, "evidence_count": total_ev, "pain_points": total_pp},
             )
+        # Single lead (or explicit sources): scope to the lead's own doc unless
+        # the caller named sources explicitly.
+        if not sources:
+            company = repo.get_company(repo.get_lead(lead_id).company_id) if repo.get_lead(lead_id) else None
+            dom = company.website if company else ""
+            sources = _scoped_sources_for_lead(ctx, dom)
         paths = [ctx.resolve(s, must_exist=True) for s in sources]
         result = R.research_lead(repo, lead_id, paths, evidence=acc, run_id=ctx.run_id)
         return ToolResult(
