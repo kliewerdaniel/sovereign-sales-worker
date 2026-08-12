@@ -54,7 +54,8 @@ from sworker.sales.models import Company
 from sworker.verify import run_check, VerificationOutcome
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "sworker", "sales", "templates")
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 SALES_RESEARCHER = os.path.join(TEMPLATES, "sales_researcher.yaml")
 
 

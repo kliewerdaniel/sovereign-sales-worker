@@ -1,8 +1,10 @@
-"""Sales domain layer — DailySalesOS × Sovereign Worker (§71).
+"""Sales domain layer — Sovereign AI Sales Worker (Consulting Edition) boundary (§71).
 
-DailySalesOS owns the sales domain (markdown knowledge + the Experiment_Ledger
-sqlite database). Sovereign Worker owns execution (engine, permissions, evidence,
-verification, procedures, audit). This package is the boundary between them.
+This edition of sovereign-worker runs a *real* consulting sales workflow. The
+consulting domain (markdown knowledge + the Experiment_Ledger sqlite database)
+is bundled in ``corpus/``. Sovereign Worker owns execution (engine, permissions,
+evidence, verification, procedures, audit). This package is the boundary between
+them.
 
 Nothing here re-implements a sworker subsystem: the five-tier permission model,
 the EvidenceLedger, verify.py's deterministic checks, procedures.py, scheduler.py

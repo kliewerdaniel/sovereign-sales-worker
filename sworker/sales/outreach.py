@@ -76,19 +76,25 @@ def deterministic_body(
     """Build (subject, body) from stored facts only. No model involved."""
     first = (contact.name.split()[0] if contact and contact.name else "there")
     top = pain_points[0] if pain_points else None
-    offer_name = offer.get("offer") or "Business Workflow & AI Automation Audit"
+    offer_name = offer.get("offer") or "Sovereign AI Workflow & Knowledge Systems Audit"
     price = offer.get("offer_price") or 0.0
     price_text = f"${price:,.0f}" if price else "a fixed fee"
 
     if top is not None:
         observation = top.text
-    elif evidence:
-        observation = evidence[0].claim_text
     else:
-        observation = f"how {company.name} handles inbound lead follow-up"
+        # Surface a real signal, never internal provenance bookkeeping.
+        signal = next((e for e in evidence
+                       if e.claim_type not in ("provenance",)), None)
+        if signal is not None:
+            observation = signal.claim_text
+        else:
+            observation = (
+                f"how {company.name} handles repetitive operations and internal knowledge"
+            )
 
     subject = {
-        "New Prospect": f"{company.name}: lead follow-up",
+        "New Prospect": f"{company.name}: owning your AI workflows",
         "Discovery Completed": "Summary from our call + next steps",
         "Proposal Sent": "Following up on the proposal",
     }.get(step["sequence"], f"{company.name}: operations")
@@ -99,8 +105,8 @@ def deterministic_body(
         f"Looking at {company.name}, I noticed {observation}",
         "",
         f"I run a {offer_name} — {price_text}, two weeks — that maps your full "
-        "lead-to-close workflow and quantifies what operational friction is "
-        "costing in lost deals.",
+        "operations workflow and quantifies what friction is costing in time and "
+        "duplicate software spend, then recommends what you can own and run locally.",
         "",
         f"[sequence: {step['sequence']} / {step['step']} — {step['action']}]",
         "",

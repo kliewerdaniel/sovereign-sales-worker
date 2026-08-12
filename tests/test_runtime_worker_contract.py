@@ -41,7 +41,8 @@ from sworker.inference import NullInference
 from sworker import explain as explain_mod
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "sworker", "sales", "templates")
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 # A second domain implemented purely with core tools. The point is to show the
 # engine treats it exactly like the sales worker: same lifecycle, no special-casing.

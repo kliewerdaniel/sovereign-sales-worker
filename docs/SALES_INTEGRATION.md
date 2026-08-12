@@ -1,13 +1,16 @@
-# Sales Integration — DailySalesOS × Sovereign Worker (§71)
+# Sales Integration — Sovereign AI Sales Worker (Consulting Edition) (§71)
 
-DailySalesOS defines **what the sales organization knows, wants and does**.
-Sovereign Worker provides the **autonomous execution engine** that safely performs
-those activities. The repos stay separate; this document is the integration
-boundary.
+This edition (`sovereign-sales-worker`) is a clone of `sovereign-worker`
+retargeted to acquire **Sovereign AI Systems Engineering consulting** clients.
+The consulting domain lives under `sworker/sales/`; the generic platform is
+untouched. Sovereign Worker provides the **autonomous execution engine** that
+safely performs those activities. The repos stay separate; this document is the
+integration boundary.
 
 ```
-DailySalesOS → Sales Domain (sworker/sales) → Sovereign Worker engine
-  → Workers + Tools → Evidence / Verification → Sales Pipeline (14 stages)
+consulting corpus (sworker/sales/corpus) → Sales Domain (sworker/sales)
+  → Sovereign Worker engine → Workers + Tools → Evidence / Verification
+  → Sales Pipeline (15 enum stages / 14 documented)
 ```
 
 ---
@@ -57,16 +60,20 @@ Corrections worth recording:
    file on disk, given a workspace-relative path — same discipline as
    `recompute_sum` re-reading the CSV.
 
-### 1.2 What already exists in DailySalesOS — confirmed
+### 1.2 What already exists in the sales domain — confirmed
 
-- Knowledge layer: 23 markdown docs (2,947 lines) including every file named in
-  the brief. `Follow_Up_System.md` exists (the brief cited it) — with concrete
-  day-offset sequences per stage, which is what the Follow-Up worker needs.
+- Knowledge layer: the **bundled consulting corpus** in `sworker/sales/corpus/`
+  (`Industry_Ranking.md`, `Core_Offer.md`, `Metrics_Single_Source_of_Truth.md`,
+  `CRM_Pipeline.md`, `Discovery_Rubric.md`, `Follow_Up_System.md`,
+  `Hypothesis_Log.md`). `Follow_Up_System.md` has concrete day-offset sequences
+  per stage. The corpus ships *in the repo* so the project is self-contained —
+  no external sibling folder required. Resolution order: `SOVEREIGNSALES_ROOT`
+  env → legacy `DAILYSALESOS_ROOT` env → `<workspace>/sales_knowledge/` →
+  bundled corpus.
 - Data layer: `Experiment_Ledger/experiments.db`, schema in
   `experiments.db.schema.sql`. Actual tables: `experiments`,
-  `experiment_metrics`, `prospects`, `outreach_touches`, **and `deals`** (the
-  brief missed `deals`), plus views `experiment_summary` and `daily_activity`.
-- `cli_prototype.py` supports exactly one command, `brief`.
+  `experiment_metrics`, `prospects`, `outreach_touches`, **and `deals`**, plus
+  views `experiment_summary` and `daily_activity`.
 - `CRM_Pipeline.md` defines **14 numbered stages**, but stage 10 is
   `Won / Lost` — one heading, two terminal outcomes. Modelled as **15 enum
   members** (`WON` and `LOST` separately) mapped onto the 14 documented stages,
@@ -74,14 +81,15 @@ Corrections worth recording:
   Documented in `pipeline.py`.
 - Claim tiers in `Hypothesis_Log.md`: CLAIM → HYPOTHESIS → OBSERVED (n<50) →
   CLIENT VERIFIED → CASE STUDY. Confirmed verbatim.
-- Targets in `Metrics_Single_Source_of_Truth.md`: 20 prospects, 15 outreach,
-  10 follow-ups, 1 discovery completed, 2 discoveries scheduled per day.
-  Confirmed verbatim.
-- ICP #1: Real Estate Professionals, score 4.6/5. Core offer: $2,500 audit.
+- Targets in `Metrics_Single_Source_of_Truth.md`: 20 prospects researched, 5
+  outreach sent, 10 follow-ups, 1 discovery completed, 2 discoveries scheduled
+  per day. Parsed (not hard-coded) by `knowledge.parse_daily_targets`.
+- ICP #1: Professional Services Firms, score 5/5. Core offer: **Sovereign AI
+  Workflow & Knowledge Systems Audit — $3,500 flat, two weeks**.
 - `Discovery_Rubric.md` has an explicit opportunity-score formula:
   `(Pain × Frequency × Revenue Impact × Automation Potential) / Implementation Difficulty`,
-  normalised 0-100. The qualification engine uses **this** formula rather than
-  inventing one.
+  normalised 0-100 (`_RUBRIC_MAX = 625.0`). The qualification engine uses **this**
+  formula rather than inventing one.
 
 ### 1.3 Minimum integration surface
 
@@ -148,9 +156,10 @@ The existing `EvidenceLedger`, wrapped (not replaced) by
   ref, and mirrors it into the run's `EvidenceLedger` when a run context exists.
 - Sales claim types: `pain_point`, `icp_fit`, `contact_info`, `size_signal`,
   `tech_signal`, `hiring_signal`, `urgency_signal`, `budget_signal`.
-- Claim tiers map onto sworker `Provenance` + DailySalesOS tiers:
+- Claim tiers map onto sworker `Provenance` (the corpus `Hypothesis_Log.md`
+  tiers, mirroring the original DailySalesOS tiers):
 
-| DailySalesOS tier | sworker `Provenance` | Meaning |
+| Corpus tier | sworker `Provenance` | Meaning |
 |---|---|---|
 | CLAIM | `HYPOTHESIZED` | asserted, no observation |
 | HYPOTHESIS | `INFERRED` | derived from other evidence |
@@ -203,14 +212,14 @@ changes a number.
 ## 6b. Running it (verified end-to-end)
 
 The integration is implemented, not just designed. The commands below are the
-exact ones used to produce a green daily loop against the real DailySalesOS
-markdown + ledger. Python is `/opt/homebrew/bin/python3.14` (3.14); `sworker`
+exact ones used to produce a green daily loop against the bundled consulting
+corpus + ledger. Python is `/opt/homebrew/bin/python3.14` (3.14); `sworker`
 is run from its project root (no install needed).
 
 ```bash
-export SWORKER_HOME=/tmp/salestest
-export DAILYSALESOS_LEDGER="$SWORKER_HOME/company/Experiment_Ledger/experiments.db"
-export DAILYSALESOS_ROOT=~/Documents/Projects/salesworkflow
+cd sovereign-sales-worker
+export SOVEREIGNSALES_ROOT="$PWD/sworker/sales/corpus"
+export DAILYSALESOS_LEDGER=/tmp/salestest/company/Experiment_Ledger/experiments.db
 
 # 1. Project the sales ontology into the ledger + write worker YAMLs.
 /opt/homebrew/bin/python3.14 -m sworker sales init --force
@@ -220,68 +229,47 @@ export DAILYSALESOS_ROOT=~/Documents/Projects/salesworkflow
     -p DAILY_RESEARCH -i source=candidates.csv -i limit=20
 
 # 3. Inspect the append-only audit trail.
-/opt/homebrew/bin/python3.14 -m sworker audit run_428181be36e4
+/opt/homebrew/bin/python3.14 -m sworker audit run_3def8575187f
 
 # 4. Re-derive every number from the ledger and re-check invariants.
-/opt/homebrew/bin/python3.14 -m sworker verify --run run_428181be36e4
+/opt/homebrew/bin/python3.14 -m sworker verify --run run_3def8575187f
 ```
 
-Real `run` output (deterministic fallback planner, no local LLM reachable):
+Real `daily-run` output (deterministic fallback planner, no local LLM
+reachable) — two workers through one engine:
 
 ```
-RUN #0  SUCCESS
-SUCCESS; 4 action(s) executed; 0 failed; 4 evidence item(s); 1 artifact(s)
-  artifact: /private/tmp/salestest/daily_report.md
-  DEGRADATIONS (capability reduced; run kept working):
-    ! model_fallback: no reachable language model; using deterministic fallback planner [warn]
-  replay audit: python -m sworker audit run_428181be36e4
+DAILY SALES REPORT
+date:          2026-08-12
+failed_sales_day: True
+  MISS prospects_researched   6/20
+  MISS outreach_sent          1/5
+  MISS followups_sent         0/10
+  MISS discoveries_completed  0/1
+  MISS discoveries_scheduled  0/2
+  - 15 outreach draft(s) awaiting approval
+pending_approvals: 15
+
+PER-RUN SUMMARY
+  sales_researcher   SUCCESS          ok=yes
+    inspect: sworker inspect run_3def8575187f
+    replay:  sworker replay run_3def8575187f
+  sales_outreach     SUCCESS          ok=yes
+    inspect: sworker inspect run_4a9ef374e275
+    replay:  sworker replay run_4a9ef374e275
 ```
-
-The `daily_report.md` the run produced contains the **Activity vs targets**
-table compiled from `Metrics_Single_Source_of_Truth.md` (the single source of
-truth — targets are never hard-coded in the sales layer):
-
-| Target (Metrics_Single_Source_of_Truth.md) | Metric | Actual | Target | Met |
-|---|---|---|---|---|
-| prospects_researched | leads_researched | 2 | 20 | NO |
-| outreach_sent | outreach_sent | 0 | 15 | NO |
-| followups_sent | followups_sent | 0 | 10 | NO |
-| discoveries_completed | discoveries_completed | 0 | 1 | NO |
-| discoveries_scheduled | discoveries_scheduled | 0 | 2 | NO |
 
 Because the loop ran headless with no reachable LLM and no human approval gate,
 no outreach was sent — the report correctly flags **Failed sales day** and the
 bottleneck list shows exactly which daily minimums were missed. Every count is
 re-derivable with `sworker verify` (check `sales_metrics_match_ledger`).
 
-Audit trail excerpt (append-only, hash-chained in the store):
-
-```
-1786497877.661  run.started            runs          run_428181be36e4
-1786497877.664  degradation.recorded   degradations  deg_b4105a714711
-1786497877.667  plan.created           plans         plan_cff0e408176c
-1786497877.674  action.proposed        actions       act_dbb7c771292e
-1786497877.676  step.running           steps         step_624f124dfa8c
-1786497877.681  evidence.recorded      evidence      ev_ab181c1a6988
-1786497877.682  step.done              steps         step_624f124dfa8c
-1786497877.705  artifact.created       artifacts     art_bfb4da4fbc96
-1786497877.710  run.finished           runs          run_428181be36e4
-```
-
-`replay` reconstructs the run from the same ledger (46 events, 4 actions):
-
-```bash
-/opt/homebrew/bin/python3.14 -m sworker replay run_428181be36e4 --mode explain
-# → {"mode": "explain", "run_id": "run_428181be36e4", "event_count": 46,
-#     "actions": [4 tool-action records]}
-```
-
 ## 6c. Test suite
 
 `env -u PYTHONPATH -u PYTHONHOME /opt/homebrew/bin/python3.14 -m pytest tests/ -q -p no:cacheprovider`
-→ **466 passed** (443 baseline + 23 sales: models, schema round-trip, repository,
-pipeline legality, deterministic qualification, evidence, checks fail-closed,
-tool registry, e2e engine run, CLI).
+→ **499 passed** (490 inherited baseline + 9 sales adversarial: capability
+isolation across all six workers, send-gate, score re-derivation, no-fabrication,
+brief/metrics consistency).
 
 ---
 
@@ -304,10 +292,10 @@ tool registry, e2e engine run, CLI).
    registry (40 tools total).
 5. `cli.py` (7 subcommands) + `web.py` (`/api/v1/sales`, `/sales` page) +
    worker YAMLs + `DAILY_RESEARCH`/`DAILY_SALES_RUN` procedures.
-6. 23 new tests; suite green at 466.
+6. 9 adversarial sales tests; full suite green at 499.
 7. This document, corrected to the **actual** tool names and a verified run.
 
-The next frontier (DailySalesOS v0.4 Sales Intelligence) remains Atlas-backed
+The next frontier (v0.4 Sales Intelligence) remains Atlas-backed
 claim-level retrieval and feeding real `experiment_metrics` back into ICP
 ranking — a data-flow enhancement, not an architecture change.
 

@@ -12,7 +12,8 @@ import os
 
 from sworker.sales import knowledge
 
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 
 def test_parse_daily_targets_real_doc():
@@ -20,10 +21,10 @@ def test_parse_daily_targets_real_doc():
     assert res["found"] is True, "Metrics_Single_Source_of_Truth.md not found at DAILYSALESOS root"
     assert res["source_doc"] == "Metrics_Single_Source_of_Truth.md"
 
-    # Pinned to the live document as of 2026-08-11 (lines 6-10).
+    # Pinned to the consulting Metrics_Single_Source_of_Truth.md (lines 6-10).
     assert res["targets"] == {
         "prospects_researched": 20,
-        "outreach_sent": 15,
+        "outreach_sent": 5,
         "followups_sent": 10,
         "discoveries_completed": 1,
         "discoveries_scheduled": 2,
@@ -31,11 +32,11 @@ def test_parse_daily_targets_real_doc():
 
     # Every target carries a line-level source ref (attributability invariant).
     assert res["refs"] == {
-        "prospects_researched": "Metrics_Single_Source_of_Truth.md:6",
-        "outreach_sent": "Metrics_Single_Source_of_Truth.md:7",
-        "followups_sent": "Metrics_Single_Source_of_Truth.md:8",
-        "discoveries_completed": "Metrics_Single_Source_of_Truth.md:9",
-        "discoveries_scheduled": "Metrics_Single_Source_of_Truth.md:10",
+        "prospects_researched": "Metrics_Single_Source_of_Truth.md:9",
+        "outreach_sent": "Metrics_Single_Source_of_Truth.md:10",
+        "followups_sent": "Metrics_Single_Source_of_Truth.md:11",
+        "discoveries_completed": "Metrics_Single_Source_of_Truth.md:13",
+        "discoveries_scheduled": "Metrics_Single_Source_of_Truth.md:12",
     }, res["refs"]
 
 

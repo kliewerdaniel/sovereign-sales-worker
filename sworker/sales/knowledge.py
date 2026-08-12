@@ -1,4 +1,4 @@
-"""Compile the DailySalesOS markdown into the sales ontology.
+"""Compile the consulting knowledge corpus markdown into the sales ontology.
 
 The markdown stays the human-readable source of truth. This module is the
 *compiler*: it parses the documents that define offer, ICP, targets and follow-up
@@ -14,12 +14,18 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import knowledge as K
 from .models import ICP
 
-# Documents this compiler reads, relative to the DailySalesOS root.
+# Documents this compiler reads. The bundled consulting corpus ships inside the
+# package so the application is self-contained and cloneable; an operator may
+# override with SOVEREIGNSALES_ROOT (the original DailySalesOS env name is also
+# still honoured for backward compatibility with an existing corpus).
+CORPUS_DIR = os.path.join(os.path.dirname(__file__), "corpus")
+
 DOCS = {
     "icp": "Industry_Ranking.md",
     "offer": "Core_Offer.md",
@@ -32,7 +38,7 @@ DOCS = {
 
 _ICP_HEADING = re.compile(r"^###\s+(\d+)\.\s+(.+?)\s+—\s+Score:\s*([0-9.]+)\s*/\s*5\s*$")
 _MONEY = re.compile(r"\$([0-9][0-9,]*)")
-_TEAM_SIZE = re.compile(r"(\d+)\s*\+?\s*agents", re.I)
+_TEAM_SIZE = re.compile(r"(\d+)\s*\+?\s*employees", re.I)
 
 
 def _read(root: str, name: str) -> Optional[Tuple[str, str]]:
@@ -44,20 +50,27 @@ def _read(root: str, name: str) -> Optional[Tuple[str, str]]:
 
 
 def docs_root(workspace: str = "") -> str:
-    """Best-effort path to the DailySalesOS markdown docs (read-only source of truth).
+    """Best-effort path to the consulting knowledge corpus (source of truth).
 
-    Consults ``DAILYSALESOS_ROOT`` first (set by the operator), then falls back to a
-    ``sales_knowledge/`` dir inside the worker's workspace. The sales layer works
-    on the ledger alone when neither is present — the parse_* functions simply
-    return empty/``found=False`` and the run degrades rather than inventing values.
+    Resolution order:
+      1. ``SOVEREIGNSALES_ROOT`` env var (operator override),
+      2. ``DAILYSALESOS_ROOT`` env var (legacy name, honoured for compatibility),
+      3. a ``sales_knowledge/`` dir inside the worker's workspace,
+      4. the bundled ``sworker/sales/corpus`` (self-contained, always present).
+
+    The sales layer works on the ledger alone when none is present — the
+    parse_* functions simply return empty/``found=False`` and the run degrades
+    rather than inventing values.
     """
-    env = os.environ.get("DAILYSALESOS_ROOT", "")
+    env = os.environ.get("SOVEREIGNSALES_ROOT") or os.environ.get("DAILYSALESOS_ROOT", "")
     if env and os.path.isdir(env):
         return env
     if workspace:
         cand = os.path.join(workspace, "sales_knowledge")
         if os.path.isdir(cand):
             return cand
+    if os.path.isdir(CORPUS_DIR):
+        return CORPUS_DIR
     return ""
 
 

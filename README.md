@@ -375,15 +375,15 @@ sworker/
   sales/             Sales Worker boundary layer — reference impl of the
                      runtime/worker boundary. Adds a 2nd domain via WorkerConfig
                      + opt-in Tool subclasses + 15-stage pipeline; NO engine forks.
-                     Reads DailySalesOS markdown (read-only source of truth) and
-                     projects it into an additive extension of Experiment_Ledger.
+                     Bundles its consulting knowledge corpus and projects it into
+                     an additive extension of Experiment_Ledger.
     models.py        sales dataclasses (Lead, ICP, Evidence, PipelineStage…)
     schema.py        additive DDL stubs (never drops/alters ledger tables)
     repository.py    SalesRepository — single ledger writer + read-only raw()
     pipeline.py      15-stage PipelineStage enum + can_move transition guard
     qualification.py deterministic lead scoring (refuses no-evidence leads)
     evidence.py      SalesEvidence (real observations only, source_ref attached)
-    knowledge.py     parses DailySalesOS markdown → ontology (incl. daily targets)
+    knowledge.py     parses bundled corpus markdown → ontology (incl. daily targets)
     discovery.py     candidate ingest (dedupe) from CSV
     research.py      local-only lead research + pain/signal extraction
     outreach.py      draft/approve/record-sent (external egress gated approve)
@@ -391,10 +391,13 @@ sworker/
     metrics.py       daily_report vs documented targets + markdown render
     checks.py        5 sales @check hooks (recompute/evidence/approval/legal/ledger)
     tools/base.py     16 sales_* Tool subclasses (opt-in via build_registry())
-    templates/       worker YAMLs (sales_researcher/outreach/analyst) +
-                     DAILY_RESEARCH.yaml / DAILY_SALES_RUN.yaml procedures
-    cli.py           `sworker sales ...` (init/seed/icp/pipeline/lead/metrics/
-                     verify/templates/daily-run)
+    corpus/          bundled consulting knowledge (ICP, offer, metrics, pipeline,
+                     rubric, follow-up sequences, claim tiers) — self-contained
+    templates/       6 worker YAMLs (researcher/qualifier/analyst/outreach/
+                     followup/strategist) + DAILY_RESEARCH.yaml /
+                     DAILY_SALES_RUN.yaml procedures
+    cli.py           `sworker sales ...` (init/seed/icp/pipeline/lead/outreach/
+                     followups/metrics/verify/brief/templates/daily-run)
     web.py           /api/v1/sales + /sales page (shares the core web engine)
 ```
 

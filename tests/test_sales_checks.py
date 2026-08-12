@@ -19,7 +19,8 @@ from sworker.sales.repository import SalesRepository, default_ledger_path
 from sworker.sales.models import Company, OutreachDraft
 from sworker.sales.checks import sales_checks
 
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 
 def _setup():

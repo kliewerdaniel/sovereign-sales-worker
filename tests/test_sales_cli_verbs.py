@@ -22,7 +22,8 @@ from sworker.store import WorkerStore
 from sworker.sales.repository import SalesRepository, default_ledger_path
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "sworker", "sales", "templates")
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 
 def _workspace_with_ledger() -> Path:

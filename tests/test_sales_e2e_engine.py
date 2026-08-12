@@ -21,7 +21,8 @@ from sworker.inference import NullInference
 from sworker import explain as explain_mod
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "sworker", "sales", "templates")
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 
 def _install_researcher(home: Path):

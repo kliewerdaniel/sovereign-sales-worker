@@ -7,10 +7,10 @@ claim id via the existing knowledge bridge. There is no path here that turns
 model prose into evidence.
 
 Pain-point detection is a **signal matcher, not an inference engine**: it looks
-for the phrases the DailySalesOS ``Discovery_Rubric.md`` already names as scoring
-triggers/signals ("We have to copy them over", "Sometimes they fall through",
-manual entry, no tracking, ...) in real source text. A match cites the file and
-line it matched; no match produces no pain point.
+for the phrases the consulting ``Discovery_Rubric.md`` already names as
+automation triggers (manual re-entry, tribal knowledge, document assembly by
+hand, SaaS sprawl, ...) in real source text. A match cites the file and line it
+matched; no match produces no pain point.
 """
 
 from __future__ import annotations
@@ -26,17 +26,17 @@ from .repository import SalesRepository
 
 # (claim_type, compiled pattern, human label)
 SIGNALS: List[Tuple[str, "re.Pattern[str]", str]] = [
-    ("size_signal", re.compile(r"\b(\d+)\s*\+?\s*(agents|employees|staff|people)\b", re.I),
+    ("size_signal", re.compile(r"\b(\d+)\s*\+?\s*(employees|staff|people|team|headcount)\b", re.I),
      "team size stated"),
-    ("size_signal", re.compile(r"\b(\d+)\s*[-–]\s*(\d+)\s*(leads|leads/month)\b", re.I),
-     "lead volume stated"),
-    ("hiring_signal", re.compile(r"\b(hiring|now hiring|we are hiring|join our team|open role)\b", re.I),
-     "actively hiring"),
-    ("tech_signal", re.compile(r"\b(salesforce|hubspot|follow ?up ?boss|kvcore|zillow|sierra|"
-                               r"boomtown|chime|mailchimp|zapier|airtable|excel|spreadsheets?)\b", re.I),
-     "tooling mentioned"),
-    ("urgency_signal", re.compile(r"\b(asap|urgent|immediately|this quarter|before (the )?end of)\b", re.I),
-     "stated urgency"),
+    ("size_signal", re.compile(r"\b(\d+)\s*[-–]\s*(\d+)\s*(leads|leads/month|proposals|proposals/month)\b", re.I),
+     "work volume stated"),
+    ("hiring_signal", re.compile(r"\b(hiring|now hiring|we are hiring|join our team|open role|we're growing)\b", re.I),
+     "actively hiring / growing"),
+    ("tech_signal", re.compile(r"\b(salesforce|hubspot|zapier|airtable|notion|slack|jira|asana|"
+                               r"intercom|zendesk|excel|google sheets?|saas|openai|chatgpt)\b", re.I),
+     "tooling / AI dependency mentioned"),
+    ("urgency_signal", re.compile(r"\b(asap|urgent|immediately|this quarter|before (the )?end of|cost review|cut (costs|spend))\b", re.I),
+     "stated urgency / cost pressure"),
     ("budget_signal", re.compile(r"\$\s?\d[\d,]*", re.I), "monetary figure stated"),
     ("contact_info", re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+", re.I), "email address published"),
     ("contact_info", re.compile(r"\b\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b"), "phone number published"),
@@ -47,49 +47,61 @@ SIGNALS: List[Tuple[str, "re.Pattern[str]", str]] = [
 # (mid-scale) because a phrase match is an OBSERVED signal, not a measurement.
 PAIN_PATTERNS: List[Dict[str, Any]] = [
     {
-        "pattern": re.compile(r"\b(copy (them )?over|re-?enter|manual (data )?entry|by hand|"
-                              r"manually (process|enter|track|update))\b", re.I),
-        "category": "Lead Capture",
-        "text": "Records appear to be moved or entered manually between systems.",
+        "pattern": re.compile(r"\b(copy (them )?over|re-?enter|re-?key|manual (data )?entry|by hand|"
+                              r"manually (process|enter|track|update|key)|same (data|info) (in|into) (two|three|multiple|several))\b", re.I),
+        "category": "Data Entry & Intake",
+        "text": "The same data appears to be re-keyed or entered manually across multiple systems.",
         "dimensions": {"severity": 4, "frequency": 5, "revenue_impact": 3,
                        "automation_potential": 5, "implementation_difficulty": 2},
     },
     {
-        "pattern": re.compile(r"\b(fall through|slip(ping)? through|lost track|drop(ped)? the ball|"
-                              r"forget to follow up|no one follows up)\b", re.I),
-        "category": "Lead Response",
-        "text": "Leads appear to be lost between capture and follow-up.",
-        "dimensions": {"severity": 5, "frequency": 4, "revenue_impact": 5,
+        "pattern": re.compile(r"\b(tribal knowledge|in (someone's|one person's|her|his|their) head|"
+                              r"no (one|single) (source|place)|scattered (across|between)|can't (find|locate)|"
+                              r"knowledge lives|nobody knows where)\b", re.I),
+        "category": "Knowledge Flow",
+        "text": "Operational knowledge appears trapped in individuals rather than a searchable system.",
+        "dimensions": {"severity": 4, "frequency": 4, "revenue_impact": 4,
                        "automation_potential": 4, "implementation_difficulty": 3},
     },
     {
-        "pattern": re.compile(r"\b(spreadsheets?|excel|google sheets?)\b", re.I),
-        "category": "Lead Generation",
-        "text": "Operational tracking appears to run on spreadsheets rather than a system.",
-        "dimensions": {"severity": 3, "frequency": 5, "revenue_impact": 3,
-                       "automation_potential": 5, "implementation_difficulty": 2},
+        "pattern": re.compile(r"\b(assembled by hand|put together (the|our) (reports?|proposals?|contracts?|packets?|intake)|"
+                              r"manual(ly)? (report|proposal|contract|document)|build (the|our) (reports?|decks?) )\b", re.I),
+        "category": "Document Flow",
+        "text": "Documents (reports, proposals, contracts, intake) appear to be assembled by hand.",
+        "dimensions": {"severity": 3, "frequency": 4, "revenue_impact": 3,
+                       "automation_potential": 4, "implementation_difficulty": 3},
     },
     {
-        "pattern": re.compile(r"\b(after hours|weekends?|nights?|when we'?re? (out|busy|closed))\b", re.I),
-        "category": "Lead Response",
+        "pattern": re.compile(r"\b(too many (tools|saas|subscriptions|apps)|paying for .*saas|overlapping tools|"
+                              r"saas sprawl|each tool (does|costs)|redundant (software|tools)|subscription creep)\b", re.I),
+        "category": "Tooling & SaaS Spend",
+        "text": "The business appears to carry overlapping SaaS tools that may be consolidated.",
+        "dimensions": {"severity": 3, "frequency": 4, "revenue_impact": 5,
+                       "automation_potential": 3, "implementation_difficulty": 3},
+    },
+    {
+        "pattern": re.compile(r"\b(after hours|weekends?|nights?|when we'?re? (out|busy|closed)|outside (business )?hours|"
+                              r"no one (covers|is available))\b", re.I),
+        "category": "Coverage",
         "text": "Coverage gaps outside business hours are acknowledged.",
-        "dimensions": {"severity": 4, "frequency": 4, "revenue_impact": 4,
-                       "automation_potential": 5, "implementation_difficulty": 2},
+        "dimensions": {"severity": 4, "frequency": 3, "revenue_impact": 3,
+                       "automation_potential": 4, "implementation_difficulty": 2},
     },
     {
         "pattern": re.compile(r"\b(don'?t track|no visibility|not sure how many|we don'?t know how many|"
-                              r"no reporting)\b", re.I),
-        "category": "Lead Generation",
-        "text": "No measurement of lead flow or conversion is in place.",
+                              r"no reporting|can't measure|hard to measure)\b", re.I),
+        "category": "Measurement",
+        "text": "No measurement of a workflow or its conversion is in place.",
         "dimensions": {"severity": 4, "frequency": 5, "revenue_impact": 4,
                        "automation_potential": 4, "implementation_difficulty": 3},
     },
     {
-        "pattern": re.compile(r"\b(paperwork|contracts?|disclosures?|intake forms?|onboarding packets?)\b", re.I),
-        "category": "Document Flow",
-        "text": "Document assembly (contracts, disclosures, intake) is a stated workload.",
+        "pattern": re.compile(r"\b(report(s)? .* (every|each) (week|month)|monthly report|same report|"
+                              r"nobody reads .* report|reporting takes|spend(s)? .* on reports)\b", re.I),
+        "category": "Reporting",
+        "text": "Repetitive reporting is produced by hand and may add little value.",
         "dimensions": {"severity": 3, "frequency": 4, "revenue_impact": 3,
-                       "automation_potential": 4, "implementation_difficulty": 3},
+                       "automation_potential": 4, "implementation_difficulty": 2},
     },
 ]
 

@@ -30,8 +30,8 @@ def _repo() -> SalesRepository:
 
 
 def _sales_docs_root() -> str:
-    """Best-effort path to the DailySalesOS markdown docs (read-only source of truth)."""
-    env = os.environ.get("DAILYSALESOS_ROOT", "")
+    """Best-effort path to the consulting corpus (read-only source of truth)."""
+    env = os.environ.get("SOVEREIGNSALES_ROOT") or os.environ.get("DAILYSALESOS_ROOT", "")
     if env and os.path.isdir(env):
         return env
     # common sibling location; never required (sales_* still works on the ledger alone)
@@ -48,12 +48,12 @@ def _jprint(obj: Any) -> None:
 # data or live APIs. Idempotent; writes only into the workspace company/ dir.
 # --------------------------------------------------------------------------- #
 _DEMO_CANDIDATES = [
-    {"name": "Acme Robotics", "website": "https://acme-robotics.example",
-     "industry": "Manufacturing", "notes": "Cited DailySalesOS ICP: mid-market manufacturer."},
-    {"name": "Globex Analytics", "website": "https://globex.example",
-     "industry": "SaaS", "notes": "Analytics platform; buying signals in sourcing doc."},
-    {"name": "Initech Tools", "website": "https://initech.example",
-     "industry": "Manufacturing", "notes": "Tooling supplier expanding sales ops."},
+    {"name": "Meridian Law Group", "website": "https://meridian-law.example",
+     "industry": "Law & Accounting", "notes": "Document-heavy practice; privacy-critical. ICP: Law & Accounting."},
+    {"name": "Northwind Manufacturing", "website": "https://northwind-mfg.example",
+     "industry": "Manufacturing", "notes": "SMB manufacturer; quoting + tribal knowledge ops."},
+    {"name": "Brightpath Consulting", "website": "https://brightpath.example",
+     "industry": "Professional Services", "notes": "10-200 person firm; SaaS sprawl + reporting burden."},
 ]
 
 
@@ -75,13 +75,14 @@ def cmd_seed(args) -> int:
         for row in _DEMO_CANDIDATES:
             w.writerow(row)
     # A minimal company-knowledge doc so research has something to read.
-    kdoc = os.path.join(company, "acme_robotics.md")
+    kdoc = os.path.join(company, "meridian_law.md")
     with open(kdoc, "w") as fh:
         fh.write(
-            "# Acme Robotics — Company Knowledge\n\n"
-            "Mid-market manufacturer automating shop-floor operations.\n"
-            "Pain points: manual lead routing, no single source of pipeline truth.\n"
-            "Buying intent: evaluating sales OS after a Q3 expansion.\n"
+            "# Meridian Law Group — Company Knowledge\n\n"
+            "Document-heavy law practice. Contracts assembled by hand; client "
+            "matter knowledge lives in one partner's head.\n"
+            "Buying intent: evaluating local-first document automation after a "
+            "Q3 cost review of SaaS spend.\n"
         )
     print(f"seeded: {csv_path} ({len(_DEMO_CANDIDATES)} candidates)")
     print(f"seeded: {kdoc}")
@@ -338,7 +339,53 @@ def cmd_verify(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# daily-run — Phase 8 flagship workflow
+# brief — Operator Decision Center: daily report + pipeline + priorities + SLA
+# --------------------------------------------------------------------------- #
+def cmd_brief(args) -> int:
+    """Daily operations center: one screen the operator reviews each morning."""
+    from . import followup as F
+
+    root = _sales_docs_root()
+    parsed = sales_knowledge.parse_daily_targets(root) if root else {"targets": {}, "source_doc": ""}
+    repo = _repo()
+    try:
+        report = sales_metrics.daily_report(
+            repo, targets=parsed.get("targets", {}),
+            targets_source=parsed.get("source_doc", ""), day=args.day,
+        )
+        due = F.due_today(repo, on=args.on)
+    finally:
+        repo.close()
+
+    print("=" * 64)
+    print("SOVEREIGN SALES WORKER — DAILY BRIEF")
+    print("=" * 64)
+    print(f"date:              {report['date']}")
+    print(f"failed_sales_day:  {report['failed_sales_day']}")
+    if report["vs_target"]:
+        print("vs targets:")
+        for tkey, v in report["vs_target"].items():
+            flag = "MET " if v["met"] else "MISS"
+            print(f"  {flag} {tkey:22} {v['actual']}/{v['target']}")
+    else:
+        print("vs targets:        (no targets parsed)")
+    print(f"follow-ups due:    {due['counts']['followups_due']}")
+    print(f"tasks due:         {due['counts']['tasks_due']}")
+    print(f"stage-SLA breaches:{due['counts']['leads_past_stage_sla']}")
+    if due["stale_leads"]:
+        print("stale leads:")
+        for s in due["stale_leads"][:10]:
+            print(f"  - {s.get('company_name','?')} @ {s.get('stage','?')} "
+                  f"(overdue {s.get('days_overdue',0)}d)")
+    if report["bottlenecks"]:
+        print("bottlenecks:")
+        for b in report["bottlenecks"]:
+            print(f"  - {b}")
+    print(f"pending approvals: {report['pending_approvals']}")
+    print("-" * 64)
+    print("open a lead:  sworker sales lead show <id>")
+    print("run the loop: sworker sales daily-run")
+    return 0
 # --------------------------------------------------------------------------- #
 def cmd_daily_run(args) -> int:
     """§8 — the Sales Worker's daily run, orchestrated through the runtime.
@@ -539,8 +586,10 @@ def build_subparser(sub) -> None:
     p.add_argument("--day", default="")
     p.set_defaults(func=cmd_verify)
 
-    p = sales_sub.add_parser("templates", help="list bundled worker + procedure templates")
-    p.set_defaults(func=cmd_templates)
+    p = sales_sub.add_parser("brief", help="daily operations center: metrics + pipeline + SLA + approvals")
+    p.add_argument("--day", default="")
+    p.add_argument("--on", default="")
+    p.set_defaults(func=cmd_brief)
 
     p = sales_sub.add_parser("daily-run", help="§8 run the Sales Worker's full daily loop")
     p.add_argument("--source", default="candidates.csv")

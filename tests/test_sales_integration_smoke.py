@@ -19,7 +19,8 @@ from sworker.sales.tools.base import SALES_TOOLS
 from sworker.verify import run_check
 
 
-DAILYSALESOS = os.path.expanduser("~/Documents/Projects/salesworkflow")
+import sworker.sales as _ssales
+DAILYSALESOS = os.path.join(os.path.dirname(_ssales.__file__), "corpus")
 
 
 def _write_candidates(tmp: Path) -> Path:
