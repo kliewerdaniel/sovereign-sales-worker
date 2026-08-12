@@ -657,7 +657,29 @@ class SalesRepository:
                 run_id=draft.run_id,
             )
         )
-        return {"draft_id": draft_id, "state": "sent", "receipt": receipt, "experiment_id": exp}
+        # Auto-stage the documented next action for this lead (follow-up /
+        # task). Local, reversible, idempotent, and NON-egress — scheduling the
+        # next touch is not the same as sending it. This is what makes the
+        # brief's "what next" actionable without a manual `followups schedule`
+        # call after every send.
+        followup = None
+        if draft.lead_id:
+            from . import followup as F
+
+            try:
+                result = F.schedule_for_lead(self, draft.lead_id, run_id=draft.run_id)
+                if result.get("created"):
+                    followup = result.get("followup_id")
+            except Exception:
+                # Follow-up staging must never fail a send that already happened.
+                followup = None
+        return {
+            "draft_id": draft_id,
+            "state": "sent",
+            "receipt": receipt,
+            "experiment_id": exp,
+            "followup_id": followup,
+        }
 
     # -- tasks / follow-ups ------------------------------------------------
     def create_task(self, task: Task) -> Task:

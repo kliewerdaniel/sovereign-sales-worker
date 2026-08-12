@@ -441,6 +441,8 @@ def cmd_outreach_send(args) -> int:
     try:
         res = repo.record_sent(args.draft_id, receipt=args.receipt or "cli")
         print(f"sent {res['draft_id']} ({res['state']}); receipt={res['receipt']}")
+        if res.get("followup_id"):
+            print(f"  next: follow-up scheduled ({res['followup_id']}) — see `sworker sales followups due`")
     except Exception as exc:
         print(f"send failed: {exc}", file=sys.stderr)
         return 1
@@ -461,15 +463,17 @@ def cmd_outreach_send_pending(args) -> int:
         if not args.confirm:
             print("refused: egress is irreversible — re-run with --confirm", file=sys.stderr)
             return 1
-        sent, skipped = 0, 0
+        sent, skipped, staged = 0, 0, 0
         for d in repo.drafts(state="approved"):
             try:
-                repo.record_sent(d.id, receipt=args.receipt or "cli-bulk")
+                res = repo.record_sent(d.id, receipt=args.receipt or "cli-bulk")
                 sent += 1
+                if res.get("followup_id"):
+                    staged += 1
             except Exception as exc:  # a draft that failed the record_sent guard
                 print(f"  skip {d.id}: {exc}", file=sys.stderr)
                 skipped += 1
-        print(f"sent {sent} approved draft(s); skipped {skipped}")
+        print(f"sent {sent} approved draft(s); skipped {skipped}; follow-ups scheduled {staged}")
     finally:
         repo.close()
     return 0

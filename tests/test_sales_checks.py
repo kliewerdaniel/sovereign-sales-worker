@@ -156,3 +156,29 @@ def test_icp_parsed_from_real_markdown():
     icps = knowledge.compile_icp(DAILYSALESOS)
     assert icps, "should compile at least one industry from the real docs"
     assert any(c.active for c in icps), "top-ranked industry should be active"
+
+
+def test_record_sent_auto_schedules_followup():
+    """Sending an approved draft must stage the documented next action (a
+    follow-up + task) so the operator's 'what next' is actionable without a
+    manual `followups schedule` call. Non-egress, idempotent; must never fail
+    the send that already happened.
+    """
+    repo, _ = _setup()
+    try:
+        lead = _seed_lead(repo, "FollowCo")
+        repo.move_stage(lead.id, "contacted", reason="test", run_id="run_x")
+        draft = repo.create_draft(
+            OutreachDraft(lead_id=lead.id, channel="email", subject="hi", body="hey")
+        )
+        repo.approve_draft(draft.id, "operator")
+        res = repo.record_sent(draft.id, receipt="cli")
+        assert res["state"] == "sent"
+        assert res.get("followup_id"), "a follow-up must be auto-scheduled on send"
+        # exactly one open follow-up + task now exists for the lead
+        fus = [f for f in repo.due_followups(on="9999-12-31") if f.lead_id == lead.id]
+        tasks = [t for t in repo.open_tasks() if t.lead_id == lead.id]
+        assert len(fus) == 1, fus
+        assert len(tasks) == 1, tasks
+    finally:
+        repo.close()
