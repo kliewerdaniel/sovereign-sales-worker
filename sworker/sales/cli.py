@@ -530,6 +530,20 @@ def cmd_brief(args) -> int:
                 if head.endswith("from"):
                     head = head[:-4].strip()
                 why = head
+            # Derive a per-lead NEXT from draft state so the operator sees the
+            # concrete action for each lead (ledger next_action is often empty).
+            if top_draft:
+                st = top_draft.state.value if hasattr(top_draft.state, "value") else str(top_draft.state)
+                if st == "draft":
+                    next_action = "Approve & send drafted outreach"
+                elif st == "approved":
+                    next_action = "Send approved outreach"
+                elif st == "sent":
+                    next_action = "Await reply"
+                else:
+                    next_action = lead.get("next_action", "") or f"({st})"
+            else:
+                next_action = lead.get("next_action", "") or ""
             who.append({
                 "company": lead.get("company_name", "?"),
                 "score": lead.get("score", 0.0),
@@ -537,7 +551,8 @@ def cmd_brief(args) -> int:
                 "industry": lead.get("industry", ""),
                 "why": why,
                 "offer": top_draft.subject if top_draft else "",
-                "pending": bool(top_draft and getattr(top_draft, "requires_approval", False)),
+                "next": next_action,
+                "pending": bool(top_draft and top_draft.state == "draft"),
             })
     finally:
         repo.close()
@@ -579,10 +594,12 @@ def cmd_brief(args) -> int:
             print(f"    WHY:   {w['why']}")
         if w["offer"]:
             print(f"    OFFER: {w['offer']}")
+        if w["next"]:
+            print(f"    NEXT:  {w['next']}")
     if not who:
         print("  (no leads researched yet — run `sworker sales daily-run`)")
     print("-" * 64)
-    print("WHAT NEXT: approve + send the drafted outreach, then await reply.")
+    print("WHAT NEXT: review/approve the draft(s) flagged above, then send.")
     print("  review a lead:  sworker sales lead show <id>")
     print("  run the loop:   sworker sales daily-run")
     return 0
