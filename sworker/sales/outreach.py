@@ -99,16 +99,19 @@ def deterministic_body(
         "Proposal Sent": "Following up on the proposal",
     }.get(step["sequence"], f"{company.name}: operations")
 
+    # Observations come from stored facts (pain-point / signal text) and are
+    # capitalised as standalone sentences. Mid-clause ("I noticed X") they must
+    # read lowercase, so downcase the leading character.
+    observed = observation[0].lower() + observation[1:] if observation else ""
+
     lines = [
         f"{first},",
         "",
-        f"Looking at {company.name}, I noticed {observation}",
+        f"Looking at {company.name}, I noticed {observed}",
         "",
         f"I run a {offer_name} — {price_text}, two weeks — that maps your full "
         "operations workflow and quantifies what friction is costing in time and "
         "duplicate software spend, then recommends what you can own and run locally.",
-        "",
-        f"[sequence: {step['sequence']} / {step['step']} — {step['action']}]",
         "",
         "Worth a short conversation?",
         "",
