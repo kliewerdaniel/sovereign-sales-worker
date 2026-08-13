@@ -20,7 +20,7 @@ labelled fixture of 33 prospects, not real companies.
   deliberate failure-mode rows: missing website, missing contact, conflicting
   budget signal, malformed (empty) row, duplicate, prompt-injection, and thin
   (low-evidence) prospect.
-- **Pipeline output (one real run):**
+- **Pipeline output (one real run; counts are fixture-run-specific, not invariants):**
   - 32 companies created (33 minus 1 malformed row rejected at discovery).
   - 1 duplicate collapsed (the second "Brightpath Consulting" row).
   - 31 leads evaluated and scored; bands: **5 high (≥60), 23 medium, 3 low, 0

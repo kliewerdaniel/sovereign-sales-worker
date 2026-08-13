@@ -1,0 +1,188 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+/* ====================================================================== */
+/*  Sovereign Worker — design tokens                                        */
+/*  Calm, precise, evidence-first. Deep neutral surfaces, one cool accent,  */
+/*  restrained semantic colors. Dark is primary.                           */
+/* ====================================================================== */
+
+@theme {
+  /* Core neutral ramp (cool graphite, not pure gray) */
+  --color-void: #07090c;
+  --color-abyss: #0a0d12;
+  --color-surface-0: #0d1117;
+  --color-surface-1: #11161d;
+  --color-surface-2: #161c25;
+  --color-surface-3: #1c232e;
+  --color-surface-4: #232c39;
+  --color-hairline: #2a3340;
+  --color-hairline-soft: #1e2530;
+
+  --color-ink-0: #f4f7fb;
+  --color-ink-1: #d7dde7;
+  --color-ink-2: #9aa6b6;
+  --color-ink-3: #6b7686;
+  --color-ink-4: #4a5462;
+
+  /* Accent — sovereign cyan, used sparingly */
+  --color-accent: #38bdf8;
+  --color-accent-strong: #0ea5e9;
+  --color-accent-dim: #155e75;
+  --color-accent-glow: rgba(56, 189, 248, 0.14);
+
+  /* Semantic states */
+  --color-ok: #34d399;
+  --color-ok-dim: #064e3b;
+  --color-warn: #fbbf24;
+  --color-warn-dim: #422006;
+  --color-bad: #f87171;
+  --color-bad-dim: #450a0a;
+  --color-block: #c084fc; /* blocked / requires-approval — violet, distinct */
+  --color-block-dim: #2e1065;
+  --color-neutral-state: #64748b;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jet), ui-monospace, "SF Mono", "Menlo", monospace;
+
+  --radius-card: 0.625rem;
+  --radius-tile: 0.5rem;
+}
+
+/* Light theme overrides (optional, opt-in via .theme-light) */
+.theme-light {
+  --color-void: #f6f8fb;
+  --color-abyss: #eef2f7;
+  --color-surface-0: #ffffff;
+  --color-surface-1: #f7f9fc;
+  --color-surface-2: #eef2f7;
+  --color-surface-3: #e4eaf2;
+  --color-surface-4: #d9e1ec;
+  --color-hairline: #d4dce6;
+  --color-hairline-soft: #e4eaf2;
+  --color-ink-0: #0b1220;
+  --color-ink-1: #1f2a3a;
+  --color-ink-2: #475569;
+  --color-ink-3: #64748b;
+  --color-ink-4: #94a3b8;
+  --color-accent-glow: rgba(14, 165, 233, 0.10);
+  --color-ok-dim: #d1fae5;
+  --color-warn-dim: #fef3c7;
+  --color-bad-dim: #fee2e2;
+  --color-block-dim: #ede9fe;
+}
+
+/* ---- base ---- */
+* {
+  border-color: var(--color-hairline);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink-1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The persistent app backdrop: a very subtle radial vignette so the deep
+   neutral surfaces feel layered, not flat. */
+.app-backdrop {
+  background:
+    radial-gradient(1200px 600px at 78% -8%, var(--color-accent-glow), transparent 60%),
+    radial-gradient(900px 500px at -6% 110%, rgba(192, 132, 252, 0.05), transparent 55%),
+    var(--color-void);
+}
+
+/* ---- primitives ---- */
+.surface {
+  background-color: var(--color-surface-1);
+  border: 1px solid var(--color-hairline-soft);
+  border-radius: var(--radius-card);
+}
+
+.surface-2 {
+  background-color: var(--color-surface-2);
+  border: 1px solid var(--color-hairline-soft);
+  border-radius: var(--radius-card);
+}
+
+.hairline {
+  border-color: var(--color-hairline-soft);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01", "zero";
+}
+
+/* gradient text for the wordmark + hero — used sparingly */
+.text-gradient {
+  background: linear-gradient(100deg, var(--color-ink-0), var(--color-accent) 85%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-gradient-soft {
+  background: linear-gradient(100deg, var(--color-ink-1), var(--color-ink-3));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* A quiet top accent rule for "live/active" surfaces */
+.edge-live {
+  box-shadow: inset 0 1px 0 0 rgba(56, 189, 248, 0.35);
+}
+
+/* status dot pulse — only when motion allowed */
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 var(--color-accent-glow); }
+  70% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+}
+.live-dot {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+/* scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-4);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-hairline); background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* focus visibility — accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* selection */
+::selection {
+  background: rgba(56, 189, 248, 0.25);
+  color: var(--color-ink-0);
+}
+
+/* honor reduced motion globally */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .live-dot { animation: none; }
+}
