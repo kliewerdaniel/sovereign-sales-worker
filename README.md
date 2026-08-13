@@ -1,6 +1,6 @@
 # Sovereign AI Worker — `sworker`
 
-![video](<iframe width="668" height="376" src="https://www.youtube.com/embed/UzVTAdgnv0A" title="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>)
+![<iframe width="668" height="376" src="https://www.youtube.com/embed/UzVTAdgnv0A" title="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>]
 
 A **local-first AI worker runtime**. One engine, many workers: you give a worker a
 YAML identity, a set of tools, and a permission policy, and the runtime executes real
