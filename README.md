@@ -1,6 +1,8 @@
 # Sovereign AI Worker — `sworker`
 
-<video src="sovereignworkerdemo.mp4" controls width="668"></video>
+<video src="sovereignworkerdemo.mp4" poster="demo-poster.jpg" controls width="668">
+  <a href="sovereignworkerdemo.mp4">Download the demo video</a>
+</video>
 
 A **local-first AI worker runtime**. One engine, many workers: you give a worker a
 YAML identity, a set of tools, and a permission policy, and the runtime executes real
