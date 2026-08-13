@@ -863,6 +863,187 @@ def cmd_templates(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# rwv — Real-World Validation harness.
+#
+# Drives the ACTUAL application (seed -> daily-run through the real WorkerEngine)
+# onto the labelled validation fixture, then reads back the REAL ledger to build
+# the per-prospect / WHO-WHY-OFFER-NEXT / human-evaluation / audit artifacts.
+# Nothing here re-implements the pipeline; it is a thin reader over SalesRepository
+# plus a SEPARATE, append-only human-evaluation store (which never touches the
+# automated qualification score).
+# --------------------------------------------------------------------------- #
+from . import rwv as RWV  # noqa: E402
+from . import rwv_fixture  # noqa: E402
+
+
+def cmd_rwv_run(args) -> int:
+    """Run the validation pipeline on the labelled fixture through the real app.
+
+    Steps: seed the fixture -> run init/icp -> run the real daily-run loop ->
+    leave the populated ledger for report/human-classify/disagreement/audit to
+    read. Fail-closed: if the workspace already has leads, refuse unless --force.
+    """
+    ws = default_workspace()
+    ws.ensure()
+    company = ws.company_dir
+    os.makedirs(company, exist_ok=True)
+
+    # Seed the LABELLED validation fixture (overrides the demo 12-company set).
+    fieldnames = ["name", "website", "industry", "geography", "team_size",
+                  "contact_name", "contact_role", "contact_email", "notes"]
+    csv_path = os.path.join(company, args.csv_name)
+    rows = rwv_fixture.fixture_rows()
+    with open(csv_path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fieldnames})
+    written = []
+    for r in rows:
+        stem = _domain_stem(r["website"])
+        if not stem:
+            continue
+        kdoc = os.path.join(company, f"{stem}.md")
+        with open(kdoc, "w") as fh:
+            fh.write(r["doc"])
+        written.append(f"{stem}.md")
+    print(f"rwv seed: {csv_path} ({len(rows)} fixture prospects)")
+    print(f"rwv seed: {len(written)} company knowledge docs (company/<stem>.md)")
+
+    # Recompile ICP from the bundled consulting corpus so qualification matches.
+    root = _sales_docs_root()
+    if root:
+        repo = _repo()
+        try:
+            for icp in sales_knowledge.compile_icp(root):
+                repo.upsert_icp(icp)
+        finally:
+            repo.close()
+
+    # Run the real daily loop through the WorkerEngine (researcher -> outreach ->
+    # qualifier -> analyst). Egress stays human-gated; only drafts are produced.
+    try:
+        from ..config import get_worker
+        from ..engine import WorkerEngine
+        from ..store import WorkerStore
+        store = WorkerStore(ws.state_dir)
+        # researcher takes an explicit limit so the whole fixture is evaluated.
+        try:
+            w = get_worker("sales_researcher")
+            eng = WorkerEngine(w, store)
+            res = eng.run("execute DAILY_RESEARCH", procedure="DAILY_RESEARCH",
+                          inputs={"source": args.source, "limit": str(args.limit)},
+                          on_event=_printer)
+            print(f"  sales_researcher  {res.status.value:14} ok={'yes' if res.ok else 'no'}")
+        except Exception as exc:
+            print(f"  sales_researcher  ERROR: {exc}")
+        for wname, proc, prompt in (
+            ("sales_outreach", "DAILY_SALES_RUN", "execute DAILY_SALES_RUN"),
+            ("sales_qualifier", "", "rank the pipeline by qualification score"),
+            ("sales_analyst", "", "generate the daily metrics report from the ledger"),
+        ):
+            try:
+                w = get_worker(wname)
+                eng = WorkerEngine(w, store)
+                if proc:
+                    res = eng.run(prompt, procedure=proc, on_event=_printer)
+                else:
+                    res = eng.run(prompt, on_event=_printer)
+                print(f"  {wname:18} {res.status.value:14} ok={'yes' if res.ok else 'no'}")
+            except Exception as exc:
+                print(f"  {wname:18} ERROR: {exc}")
+    except Exception as exc:  # never let the harness crash the shell
+        print(f"(daily loop unavailable: {exc})")
+
+    print("\nnext:  sworker sales rwv report --workspace <ws>")
+    print("       sworker sales rwv human-classify <lead_id> A --reason '...'")
+    return 0
+
+
+def cmd_rwv_report(args) -> int:
+    """Build the validation report from the REAL ledger and write artifacts."""
+    repo = _repo()
+    try:
+        leads = repo.search_leads(limit=500)
+        docs_root = _sales_docs_root()
+        reports = [RWV.build_prospect_report(repo, l["id"], docs_root) for l in leads]
+        reports = [r for r in reports if "error" not in r]
+        disagreement = RWV.disagreement_report(repo, reports)
+        ranking = RWV.ranking_explanation(reports, top=args.top)
+        meta = RWV.run_summary(repo, top_n=args.top)
+        audits = [RWV.audit_trail(repo, l["id"]) for l in leads[:args.audit]]
+        audits = [a for a in audits if a]
+    finally:
+        repo.close()
+
+    machine = RWV.render_machine_json(reports, disagreement, ranking, meta, audits)
+    human_md = RWV.render_human_report(reports, disagreement, meta)
+
+    out_dir = args.out or os.path.join(default_workspace().root, "rwv_report")
+    os.makedirs(out_dir, exist_ok=True)
+    jpath = os.path.join(out_dir, "validation_machine.json")
+    hpath = os.path.join(out_dir, "validation_human.md")
+    with open(jpath, "w") as fh:
+        json.dump(machine, fh, indent=2, default=str)
+    with open(hpath, "w") as fh:
+        fh.write(human_md)
+
+    print(f"wrote: {jpath}")
+    print(f"wrote: {hpath}")
+    print(f"\nprospects evaluated: {meta['prospects_evaluated']}")
+    print(f"high (>= {meta['high_threshold']}): {meta['high']}  "
+          f"medium: {meta['medium']}  low: {meta['low']}  insufficient: {meta['insufficient']}")
+    print("\nTOP 5:")
+    for r in sorted(reports, key=lambda x: x["score"], reverse=True)[:5]:
+        print(f"  {r['company']:26} {r['score']:.1f}  -> {r['recommended_service']}")
+    return 0
+
+
+def cmd_rwv_human(args) -> int:
+    """Record a human A/B/C/D judgement for one lead (separate store; safe)."""
+    repo = _repo()
+    try:
+        RWV.record_human_evaluation(
+            repo, args.lead_id, args.band, float(args.score),
+            args.reason, evaluated_by=args.by,
+        )
+    finally:
+        repo.close()
+    print(f"recorded human {args.band} for {args.lead_id} (score {args.score})")
+    print("this does NOT change the automated qualification score.")
+    return 0
+
+
+def cmd_rwv_disagreement(args) -> int:
+    """Show machine-vs-human disagreement from the REAL ledger."""
+    repo = _repo()
+    try:
+        leads = repo.search_leads(limit=500)
+        reports = [RWV.build_prospect_report(repo, l["id"]) for l in leads]
+        reports = [r for r in reports if "error" not in r]
+        dg = RWV.disagreement_report(repo, reports)
+    finally:
+        repo.close()
+    _jprint(dg)
+    return 0
+
+
+def cmd_rwv_audit(args) -> int:
+    """Extract the audit trail for one lead (or --top N)."""
+    repo = _repo()
+    try:
+        if args.lead_id:
+            rows = [RWV.audit_trail(repo, args.lead_id)]
+        else:
+            leads = repo.search_leads(limit=args.top)
+            rows = [RWV.audit_trail(repo, l["id"]) for l in leads]
+    finally:
+        repo.close()
+    _jprint([r for r in rows if r])
+    return 0
+
+
 def cmd_sales_dispatch(args) -> int:
     """Single entry point for the ``sales`` group.
 
@@ -992,3 +1173,31 @@ def build_subparser(sub) -> None:
     p.add_argument("--source", default="candidates.csv")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(ssub_func=cmd_daily_run)
+
+    p = sales_sub.add_parser(
+        "rwv", help="§validation — real-world validation harness (drives the real app, reads the real ledger)",
+    )
+    rwv_sub = p.add_subparsers(dest="rwvsub", required=True)
+    rp = rwv_sub.add_parser("run", help="seed the labelled fixture + run the real daily loop")
+    rp.add_argument("--csv-name", default="candidates.csv")
+    rp.add_argument("--source", default="candidates.csv")
+    rp.add_argument("--limit", type=int, default=50)
+    rp.set_defaults(ssub_func=cmd_rwv_run)
+    rp = rwv_sub.add_parser("report", help="build per-prospect + WHO/WHY/OFFER/NEXT + disagreement artifacts")
+    rp.add_argument("--top", type=int, default=10)
+    rp.add_argument("--audit", type=int, default=3)
+    rp.add_argument("--out", default="")
+    rp.set_defaults(ssub_func=cmd_rwv_report)
+    rp = rwv_sub.add_parser("human-classify", help="record a human A/B/C/D judgement (separate store)")
+    rp.add_argument("lead_id")
+    rp.add_argument("band", choices=["A", "B", "C", "D"])
+    rp.add_argument("--score", type=float, default=0.0)
+    rp.add_argument("--reason", default="")
+    rp.add_argument("--by", default="operator")
+    rp.set_defaults(ssub_func=cmd_rwv_human)
+    rp = rwv_sub.add_parser("disagreement", help="show machine-vs-human disagreement from the ledger")
+    rp.set_defaults(ssub_func=cmd_rwv_disagreement)
+    rp = rwv_sub.add_parser("audit", help="extract the audit trail for one lead (or --top N)")
+    rp.add_argument("--lead-id", default="")
+    rp.add_argument("--top", type=int, default=5)
+    rp.set_defaults(ssub_func=cmd_rwv_audit)

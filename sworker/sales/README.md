@@ -89,7 +89,28 @@ python3.14 -m sworker verify --run <run_id>
 ## Tests
 
 `env -u PYTHONPATH -u PYTHONHOME python3.14 -m pytest tests/ -q -p no:cacheprovider`
-→ **502 passed** (490 baseline inherited + 12 sales tests).
+→ **512 passed** (490 baseline inherited + sales tests; includes the real-world
+validation harness suite in `tests/test_sales_rwv.py`).
+
+## Real-world validation harness
+
+The `rwv` subcommand drives the **actual** app (discover → research → qualify →
+draft → explain) on a labelled fixture and reads the real ledger back. It does not
+reimplement the pipeline. Use it to answer — with evidence — *who to talk to,
+why, what to offer, what next*, and to record human A/B/C/D judgements in a
+separate store that never mutates the automated score.
+
+```bash
+python3.14 -m sworker sales rwv run --limit 50
+python3.14 -m sworker sales rwv report --top 15 --audit 2
+python3.14 -m sworker sales rwv human-classify <lead_id> A --reason '...'
+python3.14 -m sworker sales rwv disagreement
+python3.14 -m sworker sales rwv audit --lead-id <lead_id>
+```
+
+See `docs/REAL_WORLD_VALIDATION.md` for the honest validation report (what works,
+where it fails, next engineering work). The fixture is synthetic — this proves the
+mechanics, not real-world fit.
 
 ## Constraints (non-negotiable)
 
