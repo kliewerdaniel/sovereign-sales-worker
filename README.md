@@ -1,5 +1,7 @@
 # Sovereign AI Worker — `sworker`
 
+![./sovereignworkerdemo.mp4](video)
+
 A **local-first AI worker runtime**. One engine, many workers: you give a worker a
 YAML identity, a set of tools, and a permission policy, and the runtime executes real
 work against your local files, records every step in an append-only audit log, and
